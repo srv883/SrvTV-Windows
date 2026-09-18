@@ -31,5 +31,7 @@ over 1:1. On first run the app offers to import the favorites JSON array
 - [x] Data layer: models, M3U parser, channel repository (playlists,
       filters, categories, favorites + grouping, watch recency, probe
       protection, JSON cache), stream prober, XMLTV guide repository
-- [ ] Grid + category rail UI
-- [ ] Player + PiP + guide + schedules + search + settings
+- [x] Grid + category rail + header clock + search + settings + player
+      with PiP park, favorites toggle, aspect cycle, exit prompt
+- [ ] In-player channel guide + full schedules (double-Enter)
+- [ ] Self-contained single-file release

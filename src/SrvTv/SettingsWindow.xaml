@@ -1,0 +1,23 @@
+<Window x:Class="SrvTv.SettingsWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="Settings" Height="520" Width="700" Background="{StaticResource AppBackground}"
+        PreviewKeyDown="OnPreviewKeyDown">
+    <StackPanel Margin="36" VerticalAlignment="Top">
+        <TextBlock Text="Settings" Foreground="White" FontSize="28" FontWeight="Bold" Margin="0,0,0,24"/>
+        <Button x:Name="BtnRefresh" Content="Refresh all playlists now" Padding="16,12"
+                FontSize="16" HorizontalAlignment="Left" Click="OnRefresh"/>
+        <TextBlock x:Name="Status" Text="" Foreground="#9AA2B0" FontSize="14" Margin="0,10,0,24"/>
+        <TextBlock Text="Import favorites from the TV app" Foreground="White" FontSize="18"
+                   FontWeight="SemiBold" Margin="0,0,0,8"/>
+        <TextBlock Text="Paste the favorites JSON array from the Android app's iptv_prefs.xml, then Import."
+                   Foreground="#9AA2B0" FontSize="13" Margin="0,0,0,8" TextWrapping="Wrap"/>
+        <TextBox x:Name="FavJson" Height="120" AcceptsReturn="True" TextWrapping="Wrap"
+                 VerticalScrollBarVisibility="Auto" Background="#1C2330" Foreground="White"
+                 CaretBrush="White" BorderThickness="0" Padding="10" FontSize="12"/>
+        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+            <Button Content="Import" Padding="26,10" FontSize="15" Click="OnImport" Margin="0,0,12,0"/>
+            <Button Content="Open log folder" Padding="26,10" FontSize="15" Click="OnLogFolder"/>
+        </StackPanel>
+    </StackPanel>
+</Window>
