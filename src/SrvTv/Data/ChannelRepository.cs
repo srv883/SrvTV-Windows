@@ -18,6 +18,7 @@ public sealed class ChannelRepository
     private static readonly JsonSerializerOptions JsonOpts = new()
     {
         Converters = { new JsonStringEnumConverter() },
+        PropertyNameCaseInsensitive = true,
     };
 
     private readonly List<Channel> _channels = new();
