@@ -133,9 +133,7 @@ public sealed class ChannelRepository
 
     public async Task InitializeAsync()
     {
-        EnsurePlaylistState();
-        var cachedOk = LoadCachedChannels();
-        if (!cachedOk) await RefreshAllPlaylistsAsync().ConfigureAwait(false);
+        await BootAsync(null).ConfigureAwait(false);
     }
 
     private void EnsurePlaylistState()
@@ -276,34 +274,119 @@ public sealed class ChannelRepository
         return null;
     }
 
+    public async Task BootAsync(Action<string>? progress = null)
+    {
+        EnsurePlaylistState();
+        // Show the disk cache instantly when present; refresh decision below.
+        var hadCache = TryLoadCache();
+        if (hadCache && IsCacheFresh()) return;
+        // Stale or empty: fetch + publish fast with NO probing (UI up in
+        // seconds), then verify favorites first and the rest in background.
+        progress?.Invoke("Downloading playlists...");
+        var filtered = await FetchFilteredAsync().ConfigureAwait(false);
+        if (filtered.Count == 0) return;
+        PublishChannels(filtered);
+        progress?.Invoke("");
+        _ = CompleteProbeAsync();
+    }
+
+    private bool IsCacheFresh()
+    {
+        var t = _prefs.GetLong("cache_time", 0L);
+        return t > 0 && DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - t <= 6L * 60 * 60 * 1000
+            && _prefs.GetInt("cache_version", 0) == CacheVersion;
+    }
+
+    private async Task<List<Channel>> FetchFilteredAsync()
+    {
+        var fetches = _playlists
+            .Where(p => p.IsActive || PinnedPlaylistIds.Contains(p.Id))
+            .Select(async playlist =>
+            {
+                try
+                {
+                    PlaylistLanguages.TryGetValue(playlist.Id, out var lang);
+                    var list = await M3UParser.ParseFromUrlAsync(playlist.Url, ChannelSource.FREE_IPTV, lang)
+                        .ConfigureAwait(false);
+                    return (playlist.Id, list);
+                }
+                catch { return (playlist.Id, new List<Channel>()); }
+            }).ToList();
+        var results = await Task.WhenAll(fetches).ConfigureAwait(false);
+        var allChannels = results
+            .OrderBy(r => PlaylistRank(r.Item1))
+            .SelectMany(r => r.Item2)
+            .ToList();
+        allChannels.AddRange(LoadBundledChannels());
+        return Dedupe(FilterChannels(allChannels)).Select(WithNameOverrides).ToList();
+    }
+
+    private void PublishChannels(List<Channel> channels)
+    {
+        lock (_dataLock)
+        {
+            _channels.Clear();
+            _channels.AddRange(channels);
+        }
+        UpdateFavoriteStatus();
+        ApplyWatchTimes();
+        BuildCategories();
+        SeedDefaultFavorites();
+        CacheChannels();
+    }
+
+    // Background verification: favorites first (what the user watches),
+    // then everything else. Only flips health flags + rebuilds counts;
+    // the visible lists are snapshots, so no UI marshaling is needed.
+    public async Task CompleteProbeAsync()
+    {
+        try
+        {
+            List<string> favIds;
+            lock (_dataLock) favIds = _favorites.ToList();
+            var favs = Channels.Where(c => favIds.Contains(c.Id)).ToList();
+            Log.Write($"probe: verifying {favs.Count} favorites first...");
+            ApplyWorkingFlags(await ProbeIdsAsync(favs).ConfigureAwait(false), favIds);
+            CacheChannels();
+            Log.Write("probe: favorites done; checking the rest in background...");
+            List<Channel> rest;
+            lock (_dataLock) rest = _channels.Where(c => !favIds.Contains(c.Id)).ToList();
+            ApplyWorkingFlags(
+                await ProbeIdsAsync(rest).ConfigureAwait(false),
+                rest.Select(c => c.Id).ToList());
+            BuildCategories();
+            CacheChannels();
+            Log.Write("probe: background check done.");
+        }
+        catch (Exception ex) { Log.Write("background probe failed: " + ex.Message); }
+    }
+
+    private static async Task<HashSet<string>> ProbeIdsAsync(List<Channel> channels)
+    {
+        if (channels.Count == 0) return new HashSet<string>();
+        var ok = await StreamProber.ProbeAllAsync(channels).ConfigureAwait(false);
+        return ok.Select(c => c.Id).ToHashSet();
+    }
+
+    private void ApplyWorkingFlags(HashSet<string> passed, List<string> ids)
+    {
+        lock (_dataLock)
+        {
+            foreach (var id in ids)
+            {
+                var idx = _channels.FindIndex(c => c.Id == id);
+                if (idx >= 0) _channels[idx] = _channels[idx].With(isWorking: passed.Contains(id));
+            }
+        }
+        UpdateFavoriteStatus();
+    }
+
     public async Task RefreshAllPlaylistsAsync(bool quiet = false, Action<int, int>? onProbe = null)
     {
         await Task.Run(async () =>
         {
             if (!quiet) SetProgress("Downloading playlists...");
-            var fetches = _playlists
-                .Where(p => p.IsActive || PinnedPlaylistIds.Contains(p.Id))
-                .Select(async playlist =>
-                {
-                    try
-                    {
-                        PlaylistLanguages.TryGetValue(playlist.Id, out var lang);
-                        var list = await M3UParser.ParseFromUrlAsync(playlist.Url, ChannelSource.FREE_IPTV, lang)
-                            .ConfigureAwait(false);
-                        return (playlist.Id, list);
-                    }
-                    catch { return (playlist.Id, new List<Channel>()); }
-                }).ToList();
-            var results = await Task.WhenAll(fetches).ConfigureAwait(false);
-            var rank = new Dictionary<string, int>();
-            var allChannels = results
-                .OrderBy(r => PlaylistRank(r.Item1))
-                .SelectMany(r => r.Item2)
-                .ToList();
-            _ = rank;
-
-            allChannels.AddRange(LoadBundledChannels());
-            var filtered = Dedupe(FilterChannels(allChannels)).Select(WithNameOverrides).ToList();
+            var filtered = await FetchFilteredAsync().ConfigureAwait(false);
             if (!quiet) SetProgress($"Testing {filtered.Count} streams...");
             var working = await StreamProber.ProbeAllAsync(filtered, (a, b) =>
             {
@@ -866,13 +949,10 @@ public sealed class ChannelRepository
         catch { }
     }
 
-    private bool LoadCachedChannels()
+    private bool TryLoadCache()
     {
         var json = _prefs.GetString("cached_channels", "");
         if (string.IsNullOrEmpty(json)) return false;
-        var cacheTime = _prefs.GetLong("cache_time", 0L);
-        var fresh = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() - cacheTime <= 6L * 60 * 60 * 1000
-            && _prefs.GetInt("cache_version", 0) == CacheVersion;
         try
         {
             var loaded = JsonSerializer.Deserialize<List<Channel>>(json, JsonOpts) ?? new();
@@ -884,7 +964,7 @@ public sealed class ChannelRepository
                 BuildCategories();
                 SeedDefaultFavorites();
             }
-            return fresh && loaded.Count > 0;
+            return loaded.Count > 0;
         }
         catch { return false; }
     }

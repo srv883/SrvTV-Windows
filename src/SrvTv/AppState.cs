@@ -32,10 +32,13 @@ public sealed class AppState
     {
         Repo.ProgressChanged = progress;
         await Repo.InitializeAsync().ConfigureAwait(false);
-        progress("Loading guide...");
-        try { await Epg.RefreshIfNeededAsync(Repo.Channels).ConfigureAwait(false); }
-        catch (Exception ex) { Log.Write("EPG refresh failed: " + ex.Message); }
         progress("");
+        // Guide downloads in the background: boot never waits on it.
+        _ = Task.Run(async () =>
+        {
+            try { await Epg.RefreshIfNeededAsync(Repo.Channels).ConfigureAwait(false); }
+            catch (Exception ex) { Log.Write("EPG refresh failed: " + ex.Message); }
+        });
     }
 
     public void EnsureLib()

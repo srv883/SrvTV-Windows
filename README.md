@@ -3,7 +3,10 @@
 Native Windows port of **Srv TV** (the Android TV app): same channels, same
 favorites, same guide — WPF on .NET 8 with LibVLCSharp (VLC) for playback.
 
-Keyboard map mirrors the TV remote: arrows = D-pad, Enter = OK, Esc = Back.
+Keyboard map mirrors the TV remote: arrows = D-pad, Enter = OK,
+double-click a card = play, F = favorite, Esc = back, hold Esc = exit.
+On boot only favorites are stream-checked (seconds); the rest of the
+library verifies quietly in the background.
 
 ## Build & run
 

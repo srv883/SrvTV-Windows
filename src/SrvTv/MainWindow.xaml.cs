@@ -169,6 +169,7 @@ public partial class MainWindow : Window
             else Dispatcher.BeginInvoke(() =>
             {
                 if (Grid.ItemContainerGenerator.ContainerFromIndex(position) is ListBoxItem it2) it2.Focus();
+                else Grid.Focus(); // never strand keyboard focus in the void
             });
         });
     }
@@ -240,9 +241,13 @@ public partial class MainWindow : Window
         ShowToast(repo.IsFavorite(id) ? $"{ch.Name} added to Favorites ★" : $"{ch.Name} removed from Favorites");
     }
 
-    private void PlaySelected()
+    private void OnGridDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
-        var pos = Grid.SelectedIndex;
+        PlaySelected();
+    }
+
+    private void PlaySelected()
+    {        var pos = Grid.SelectedIndex;
         var list = GridChannels;
         if (pos < 0 || pos >= list.Count) return;
         var ch = list[pos];

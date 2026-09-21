@@ -80,6 +80,7 @@
         <!-- Channel grid -->
         <ListBox x:Name="Grid" Grid.Row="2" Background="Transparent" BorderThickness="0"
                  Margin="22,0,22,14" SelectionMode="Single"
+                 MouseDoubleClick="OnGridDoubleClick"
                  VirtualizingPanel.IsVirtualizing="True"
                  VirtualizingPanel.VirtualizationMode="Recycling"
                  ScrollViewer.CanContentScroll="True"
