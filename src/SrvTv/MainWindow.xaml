@@ -132,9 +132,10 @@
         <!-- Mini PiP (top-right corner) -->
         <Border x:Name="PipFrame" Width="240" Height="135" Visibility="Collapsed"
                 HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,16,16,0"
-                CornerRadius="10" BorderBrush="#5AC8FA" BorderThickness="1" Background="Black">
+                CornerRadius="10" BorderBrush="#5AC8FA" BorderThickness="1" Background="Black"
+                MouseLeftButtonUp="OnPipResume" Cursor="Hand">
             <Grid>
-                <vlc:VideoView x:Name="MiniView"/>
+                <vlc:VideoView x:Name="MiniView" IsHitTestVisible="False"/>
                 <Button Content="✕" Width="30" Height="30" FontSize="13" Padding="0"
                         HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,4,4,0"
                         Click="OnPipClose"/>
@@ -145,6 +146,11 @@
         <TextBlock x:Name="Toast" Grid.Row="2" Foreground="White" FontSize="14"
                    HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="30,0,0,24"
                    Background="#CC141A24" Padding="14,8" Visibility="Collapsed"/>
+
+        <!-- Key hints -->
+        <TextBlock Grid.Row="2" Foreground="#5A6577" FontSize="12"
+                   HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,30,24"
+                   Text="Arrows move • Enter / double-click play • F favorite • Esc exit"/>
 
         <!-- Exit overlay -->
         <Grid x:Name="ExitOverlay" Grid.RowSpan="3" Background="#B3000000" Visibility="Collapsed">

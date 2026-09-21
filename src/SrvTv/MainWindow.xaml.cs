@@ -245,13 +245,14 @@ public partial class MainWindow : Window
     {
         PlaySelected();
     }
-
-    private void PlaySelected()
-    {        var pos = Grid.SelectedIndex;
+private void PlaySelected()
+    {
+        var pos = Grid.SelectedIndex;
         var list = GridChannels;
         if (pos < 0 || pos >= list.Count) return;
         var ch = list[pos];
         AppState.Instance.LastOpenedChannelId = ch.Id;
+        AppState.Instance.ReleaseParked(); // never two streams at once
         HidePip();
         var cat = AppState.Instance.Repo.Categories
             .FirstOrDefault(c => c.Id == AppState.Instance.SelectedCategoryId);
@@ -348,6 +349,7 @@ public partial class MainWindow : Window
         try
         {
             MiniView.MediaPlayer = p;
+            if (!p.IsPlaying) p.Play();
             PipFrame.Visibility = Visibility.Visible;
         }
         catch (Exception ex)
@@ -365,11 +367,23 @@ public partial class MainWindow : Window
 
     private void OnPipClose(object sender, RoutedEventArgs e)
     {
-        try { AppState.Instance.ParkedPlayer?.Stop(); } catch { }
-        try { AppState.Instance.ParkedPlayer?.Dispose(); } catch { }
-        AppState.Instance.ParkedPlayer = null;
+        AppState.Instance.ReleaseParked();
         AppState.Instance.ParkedChannel = null;
         HidePip();
+    }
+
+    // Click the mini player: resume fullscreen on the same channel
+    // (fresh pipeline; the parked player is released first).
+    private void OnPipResume(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        var ch = AppState.Instance.ParkedChannel;
+        if (ch == null) return;
+        var catId = AppState.Instance.ParkedCategoryId;
+        var catName = AppState.Instance.ParkedCategoryName;
+        AppState.Instance.ReleaseParked();
+        HidePip();
+        AppState.Instance.LastOpenedChannelId = ch.Id;
+        new PlayerWindow(ch, catId, catName).Show();
     }
 
     private void ShowExitOverlay()

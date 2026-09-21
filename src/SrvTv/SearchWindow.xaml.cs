@@ -34,6 +34,7 @@ public partial class SearchWindow : Window
     {
         if (Results.SelectedItem is not Channel ch) return;
         AppState.Instance.LastOpenedChannelId = ch.Id;
+        AppState.Instance.ReleaseParked();
         var cat = AppState.Instance.Repo.Categories
             .FirstOrDefault(c => c.Id == AppState.Instance.SelectedCategoryId);
         new PlayerWindow(ch, cat?.Id, cat?.Name).Show();

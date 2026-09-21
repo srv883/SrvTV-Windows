@@ -47,6 +47,17 @@ public sealed class AppState
         Lib = new LibVLC();
     }
 
+    // Exactly one parked player may exist. Call before any fresh playback
+    // or re-park, otherwise two streams sound at once.
+    public void ReleaseParked()
+    {
+        try { ParkedPlayer?.Stop(); } catch { }
+        try { ParkedPlayer?.Dispose(); } catch { }
+        ParkedPlayer = null;
+        ParkedChannel = null;
+        ParkedCategoryId = ParkedCategoryName = null;
+    }
+
     public List<Channel> CurrentChannels()
     {
         var cats = Repo.Categories;
