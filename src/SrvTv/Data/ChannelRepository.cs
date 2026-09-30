@@ -78,6 +78,16 @@ public sealed class ChannelRepository
         ["http://5.188.159.128:8070/Cartoon_Network/index.m3u8"] = "Cartoon Network",
     };
 
+    // Route-level URL swaps (feed URL died, identical stream lives
+    // elsewhere). Applied after id computation so favorites survive.
+    private static readonly Dictionary<string, string> UrlOverrides = new()
+    {
+        ["https://cloudplay-sonyliv.pages.dev/max2.m3u8"] =
+            "http://107.167.16.138/sonymax2/index.m3u8?token=test",
+        ["https://cloudplay-sonyliv.pages.dev/pal.m3u8"] =
+            "http://59.103.38.46:8000/play/a0ac/index.m3u8",
+    };
+
     private static readonly List<string> FavoriteCategoryOrder = new()
     {
         "sports", "kids", "animation", "documentary", "movies", "news",
@@ -318,7 +328,7 @@ public sealed class ChannelRepository
             .SelectMany(r => r.Item2)
             .ToList();
         allChannels.AddRange(LoadBundledChannels());
-        return Dedupe(FilterChannels(allChannels)).Select(WithNameOverrides).ToList();
+        return Dedupe(FilterChannels(allChannels)).Select(WithOverrides).ToList();
     }
 
     private void PublishChannels(List<Channel> channels)
@@ -453,7 +463,7 @@ public sealed class ChannelRepository
             lock (_dataLock)
             {
                 _channels.RemoveAll(c => c.Source.ToString() == playlistId);
-                _channels.AddRange(Dedupe(FilterChannels(fresh)).Select(WithNameOverrides));
+                _channels.AddRange(Dedupe(FilterChannels(fresh)).Select(WithOverrides));
             }
             UpdateFavoriteStatus();
             ApplyWatchTimes();
@@ -476,6 +486,21 @@ public sealed class ChannelRepository
     private static Channel WithNameOverrides(Channel ch)
     {
         return NameOverrides.TryGetValue(ch.Url, out var name) ? ch.With(name: name) : ch;
+    }
+
+    private static Channel WithUrlOverrides(Channel ch)
+    {
+        return UrlOverrides.TryGetValue(ch.Url, out var url) ? ch.With(url: url) : ch;
+    }
+
+    private static List<Channel> WithOverrides(List<Channel> channels)
+    {
+        return channels.Select(ch =>
+        {
+            if (NameOverrides.TryGetValue(ch.Url, out var name)) ch = ch.With(name: name);
+            if (UrlOverrides.TryGetValue(ch.Url, out var url)) ch = ch.With(url: url);
+            return ch;
+        }).ToList();
     }
 
     private static List<Channel> Dedupe(List<Channel> channels)
@@ -958,7 +983,7 @@ public sealed class ChannelRepository
             var loaded = JsonSerializer.Deserialize<List<Channel>>(json, JsonOpts) ?? new();
             if (loaded.Count > 0)
             {
-                lock (_dataLock) _channels.AddRange(loaded.Select(WithNameOverrides));
+                lock (_dataLock) _channels.AddRange(loaded.Select(WithOverrides));
                 UpdateFavoriteStatus();
                 ApplyWatchTimes();
                 BuildCategories();
