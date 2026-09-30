@@ -493,14 +493,11 @@ public sealed class ChannelRepository
         return UrlOverrides.TryGetValue(ch.Url, out var url) ? ch.With(url: url) : ch;
     }
 
-    private static List<Channel> WithOverrides(List<Channel> channels)
+    private static Channel WithOverrides(Channel ch)
     {
-        return channels.Select(ch =>
-        {
-            if (NameOverrides.TryGetValue(ch.Url, out var name)) ch = ch.With(name: name);
-            if (UrlOverrides.TryGetValue(ch.Url, out var url)) ch = ch.With(url: url);
-            return ch;
-        }).ToList();
+        if (NameOverrides.TryGetValue(ch.Url, out var name)) ch = ch.With(name: name);
+        if (UrlOverrides.TryGetValue(ch.Url, out var url)) ch = ch.With(url: url);
+        return ch;
     }
 
     private static List<Channel> Dedupe(List<Channel> channels)
