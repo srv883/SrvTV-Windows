@@ -80,6 +80,8 @@ public sealed class ChannelRepository
 
     // Route-level URL swaps (feed URL died, identical stream lives
     // elsewhere). Applied after id computation so favorites survive.
+    // NOTE: worker-bouquet MP4s were tried and REJECTED (2026-10-01):
+    // finite moov-at-end recordings, not live.
     private static readonly Dictionary<string, string> UrlOverrides = new()
     {
         ["https://cloudplay-sonyliv.pages.dev/max2.m3u8"] =
@@ -496,7 +498,9 @@ public sealed class ChannelRepository
     private static Channel WithOverrides(Channel ch)
     {
         if (NameOverrides.TryGetValue(ch.Url, out var name)) ch = ch.With(name: name);
-        if (UrlOverrides.TryGetValue(ch.Url, out var url)) ch = ch.With(url: url);
+        if (UrlOverrides.TryGetValue(ch.Url, out var url))
+            ch = ch.With(url: url,
+                streamFormat: url.Contains("workers.dev") ? StreamFormat.MP4 : ch.StreamFormat);
         return ch;
     }
 
