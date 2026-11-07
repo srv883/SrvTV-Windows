@@ -6,7 +6,7 @@
         Title="Srv TV Player" Background="Black" WindowState="Maximized"
         WindowStyle="None" PreviewKeyDown="OnPreviewKeyDown" PreviewKeyUp="OnPreviewKeyUp">
     <Grid Background="Black">
-        <vlc:VideoView x:Name="Video"/>
+        <vlc:VideoView x:Name="Video" MouseLeftButtonUp="OnVideoClick"/>
 
         <!-- Top info bar -->
         <Border x:Name="InfoBar" HorizontalAlignment="Stretch" VerticalAlignment="Top"

@@ -80,7 +80,6 @@
         <!-- Channel grid -->
         <ListBox x:Name="Grid" Grid.Row="2" Background="Transparent" BorderThickness="0"
                  Margin="22,0,22,14" SelectionMode="Single"
-                 MouseDoubleClick="OnGridDoubleClick"
                  VirtualizingPanel.IsVirtualizing="True"
                  VirtualizingPanel.VirtualizationMode="Recycling"
                  ScrollViewer.CanContentScroll="True"
@@ -150,7 +149,7 @@
         <!-- Key hints -->
         <TextBlock Grid.Row="2" Foreground="#5A6577" FontSize="12"
                    HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,30,24"
-                   Text="Arrows move • Enter / double-click play • F favorite • Esc exit"/>
+                   Text="Click to watch • ⭐ favorite • Ctrl+F search • Arrows/PgUp/PgDn move • Enter play • Esc exit"/>
 
         <!-- Exit overlay -->
         <Grid x:Name="ExitOverlay" Grid.RowSpan="3" Background="#B3000000" Visibility="Collapsed">

@@ -13,6 +13,14 @@ public partial class SearchWindow : Window
         Refresh("");
     }
 
+    public void Prefill(string query)
+    {
+        Query.Text = query;
+        Query.SelectAll();
+        Query.Focus();
+        Refresh(query);
+    }
+
     private void Refresh(string q)
     {
         var list = AppState.Instance.Repo.SearchChannels(q);

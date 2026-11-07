@@ -27,6 +27,8 @@ public sealed class ChannelRepository
     private readonly List<Playlist> _playlists = new();
     private readonly HashSet<string> _favorites = new();
     private readonly Dictionary<string, long> _watchTimes = new();
+    private readonly SemaphoreSlim _refreshGate = new(1, 1);
+    private readonly SemaphoreSlim _probeGate = new(1, 1);
 
     public Action<string>? ProgressChanged;
     public Action<bool>? BackgroundBusyChanged;
@@ -352,6 +354,8 @@ public sealed class ChannelRepository
     // the visible lists are snapshots, so no UI marshaling is needed.
     public async Task CompleteProbeAsync()
     {
+        if (!await _probeGate.WaitAsync(0).ConfigureAwait(false)) return;
+        SetBackgroundBusy(true);
         try
         {
             List<string> favIds;
@@ -359,7 +363,7 @@ public sealed class ChannelRepository
             var favs = Channels.Where(c => favIds.Contains(c.Id)).ToList();
             Log.Write($"probe: verifying {favs.Count} favorites first...");
             ApplyWorkingFlags(await ProbeIdsAsync(favs).ConfigureAwait(false), favIds);
-            CacheChannels();
+            CacheChannels(updateTimestamp: false);
             Log.Write("probe: favorites done; checking the rest in background...");
             List<Channel> rest;
             lock (_dataLock) rest = _channels.Where(c => !favIds.Contains(c.Id)).ToList();
@@ -367,10 +371,15 @@ public sealed class ChannelRepository
                 await ProbeIdsAsync(rest).ConfigureAwait(false),
                 rest.Select(c => c.Id).ToList());
             BuildCategories();
-            CacheChannels();
+            CacheChannels(updateTimestamp: false);
             Log.Write("probe: background check done.");
         }
         catch (Exception ex) { Log.Write("background probe failed: " + ex.Message); }
+        finally
+        {
+            SetBackgroundBusy(false);
+            _probeGate.Release();
+        }
     }
 
     private static async Task<HashSet<string>> ProbeIdsAsync(List<Channel> channels)
@@ -395,49 +404,28 @@ public sealed class ChannelRepository
 
     public async Task RefreshAllPlaylistsAsync(bool quiet = false, Action<int, int>? onProbe = null)
     {
-        await Task.Run(async () =>
+        if (!await _refreshGate.WaitAsync(0).ConfigureAwait(false)) return;
+        try
         {
             if (!quiet) SetProgress("Downloading playlists...");
             var filtered = await FetchFilteredAsync().ConfigureAwait(false);
-            if (!quiet) SetProgress($"Testing {filtered.Count} streams...");
-            var working = await StreamProber.ProbeAllAsync(filtered, (a, b) =>
+            if (filtered.Count == 0)
             {
-                if (!quiet) SetProgress($"Testing streams... {a}/{b}");
-                onProbe?.Invoke(a, b);
-            }).ConfigureAwait(false);
+                if (!quiet) SetProgress("Refresh failed — keeping existing channels");
+                return;
+            }
 
-            var workingIds = working.Select(c => c.Id).ToHashSet();
-            var workingUrls = working.Select(c => c.Url).ToHashSet();
-            List<Channel> previous;
-            lock (_dataLock) previous = _channels.ToList();
-            var freshById = filtered.ToDictionary(c => c.Id, c => c);
-            var keep = new List<Channel>();
-            foreach (var id in _favorites.ToList())
-            {
-                if (workingIds.Contains(id)) continue;
-                var cand = freshById.TryGetValue(id, out var f) ? f
-                    : previous.FirstOrDefault(c => c.Id == id);
-                if (cand == null || workingUrls.Contains(cand.Url)) continue;
-                workingUrls.Add(cand.Url);
-                keep.Add(cand.With(isWorking: false));
-            }
-            var final = working.Concat(keep).ToList();
-            lock (_dataLock)
-            {
-                if (final.Count > 0 || _channels.Count == 0)
-                {
-                    _channels.Clear();
-                    _channels.AddRange(final);
-                }
-            }
-            UpdateFavoriteStatus();
-            ApplyWatchTimes();
-            BuildCategories();
-            SeedDefaultFavorites();
-            CacheChannels();
-            await StoreFreshSigsAsync().ConfigureAwait(false);
+            // Parsed manifests are usable immediately. Stream health probing
+            // runs after publication so a dead CDN cannot block the grid.
+            PublishChannels(filtered);
+            _ = StoreFreshSigsAsync();
+            _ = CompleteProbeAsync();
             if (!quiet) SetProgress("");
-        }).ConfigureAwait(false);
+        }
+        finally
+        {
+            _refreshGate.Release();
+        }
     }
 
     private List<Channel> LoadBundledChannels()
@@ -462,6 +450,7 @@ public sealed class ChannelRepository
             PlaylistLanguages.TryGetValue(playlist.Id, out var lang);
             var fresh = await M3UParser.ParseFromUrlAsync(playlist.Url, ChannelSource.FREE_IPTV, lang)
                 .ConfigureAwait(false);
+            if (fresh.Count == 0) return;
             lock (_dataLock)
             {
                 _channels.RemoveAll(c => c.Source.ToString() == playlistId);
@@ -470,7 +459,7 @@ public sealed class ChannelRepository
             UpdateFavoriteStatus();
             ApplyWatchTimes();
             BuildCategories();
-            CacheChannels();
+            CacheChannels(updateTimestamp: true);
         }).ConfigureAwait(false);
     }
 
@@ -960,7 +949,7 @@ public sealed class ChannelRepository
         catch { }
     }
 
-    private void CacheChannels()
+    private void CacheChannels(bool updateTimestamp = true)
     {
         List<Channel> snapshot;
         lock (_dataLock) snapshot = _channels.ToList();
@@ -968,7 +957,8 @@ public sealed class ChannelRepository
         try
         {
             _prefs.PutString("cached_channels", JsonSerializer.Serialize(snapshot, JsonOpts));
-            _prefs.PutLong("cache_time", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+            if (updateTimestamp)
+                _prefs.PutLong("cache_time", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
             _prefs.PutInt("cache_version", CacheVersion);
             _prefs.Apply();
         }

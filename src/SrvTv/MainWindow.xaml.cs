@@ -11,6 +11,7 @@ public partial class MainWindow : Window
 {
     private const double CardStep = 304.0; // 290 card + 2x7 container padding
     private bool _interacted;
+    private bool _refreshing;
     private bool _syncingRail;
     private readonly DispatcherTimer _clock = new();
     private readonly DispatcherTimer _toastTimer = new();
@@ -19,11 +20,18 @@ public partial class MainWindow : Window
     {
         InitializeComponent();
         Loaded += async (_, _) => await BootAsync();
-        Activated += (_, _) => SyncPip();
+        Activated += (_, _) => { SyncPip(); RefreshNowChips(); };
         _clock.Interval = TimeSpan.FromSeconds(30);
         _clock.Tick += (_, _) => UpdateClock();
         _toastTimer.Interval = TimeSpan.FromSeconds(3);
         _toastTimer.Tick += (_, _) => { Toast.Visibility = Visibility.Collapsed; _toastTimer.Stop(); };
+        Grid.AddHandler(ChannelCard.PlayRequestedEvent, new RoutedEventHandler(OnCardPlayRequested));
+        Grid.AddHandler(ChannelCard.FavoriteToggledEvent, new RoutedEventHandler(OnCardFavoriteToggled));
+        Rail.PreviewMouseWheel += OnRailPreviewMouseWheel;
+        MiniView.Loaded += (_, _) =>
+        {
+            if (AppState.Instance.ParkedPlayer != null) AttachParked();
+        };
     }
 
     private async Task BootAsync()
@@ -51,6 +59,25 @@ public partial class MainWindow : Window
                 FocusGridPosition(0);
             Log.Write($"boot done: {AppState.Instance.Repo.Channels.Count} channels, " +
                       $"{AppState.Instance.Repo.Categories.Count} categories");
+        });
+
+        // Recheck stale manifests after the cached grid is visible. A
+        // changed playlist can rebuild the grid, but never delays first paint.
+        _ = Task.Run(async () =>
+        {
+            try
+            {
+                if (await AppState.Instance.Repo.BootRecheckAsync().ConfigureAwait(false))
+                {
+                    await Dispatcher.InvokeAsync(() =>
+                    {
+                        FillRail();
+                        LoadCategory(AppState.Instance.SelectedCategoryId, focusTop: false);
+                        ChannelCount.Text = $"{AppState.Instance.Repo.Channels.Count} channels";
+                    });
+                }
+            }
+            catch (Exception ex) { Log.Write("boot recheck failed: " + ex.Message); }
         });
     }
 
@@ -143,6 +170,20 @@ public partial class MainWindow : Window
         var w = sv?.ViewportWidth ?? Grid.ActualWidth;
         if (w <= 0) w = 1200;
         return Math.Max(1, (int)(w / CardStep));
+    }
+
+    private int GridPageLines()
+    {
+        var sv = FindScrollViewer(Grid);
+        var h = sv?.ViewportHeight ?? Grid.ActualHeight;
+        if (h <= 0) h = 600;
+        return Math.Max(1, (int)(h / 182)); // 168 card + 14 container padding
+    }
+
+    private void OnRailPreviewMouseWheel(object sender, System.Windows.Input.MouseWheelEventArgs e)
+    {
+        StepPillFocus(e.Delta > 0 ? -1 : 1);
+        e.Handled = true;
     }
 
     private static ScrollViewer? FindScrollViewer(DependencyObject root)
@@ -241,16 +282,40 @@ public partial class MainWindow : Window
         ShowToast(repo.IsFavorite(id) ? $"{ch.Name} added to Favorites ★" : $"{ch.Name} removed from Favorites");
     }
 
-    private void OnGridDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    private void OnCardPlayRequested(object sender, RoutedEventArgs e)
     {
-        PlaySelected();
+        if (e.OriginalSource is ChannelCard card && card.DataContext is Channel ch)
+            PlayChannel(ch);
     }
+
+    private void OnCardFavoriteToggled(object sender, RoutedEventArgs e)
+    {
+        var repo = AppState.Instance.Repo;
+        repo.RefreshFavorites();
+        FillRailCounts();
+        ChannelCount.Text = $"{repo.Channels.Count} channels";
+        // Rebuild the current section so fav counts/order stay correct;
+        // restore focus to the toggled channel if still present.
+        var list = GridChannels;
+        var id = (e.OriginalSource as ChannelCard)?.DataContext is Channel c ? c.Id : null;
+        var cat = AppState.Instance.SelectedCategoryId;
+        var fresh = repo.GetChannelsForCategory(cat,
+            repo.Categories.FirstOrDefault(x => x.Id == cat)?.Name ?? "");
+        Grid.ItemsSource = fresh;
+        var at = id != null ? fresh.FindIndex(x => x.Id == id) : -1;
+        FocusGridPosition(at >= 0 ? at : Math.Min(Grid.SelectedIndex, Math.Max(0, fresh.Count - 1)));
+    }
+
 private void PlaySelected()
     {
         var pos = Grid.SelectedIndex;
         var list = GridChannels;
         if (pos < 0 || pos >= list.Count) return;
-        var ch = list[pos];
+        PlayChannel(list[pos]);
+    }
+
+    private void PlayChannel(Channel ch)
+    {
         AppState.Instance.LastOpenedChannelId = ch.Id;
         AppState.Instance.ReleaseParked(); // never two streams at once
         HidePip();
@@ -275,6 +340,11 @@ private void PlaySelected()
         var inGrid = Grid.IsKeyboardFocusWithin;
 
         if (e.Key == Key.Escape) { ShowExitOverlay(); e.Handled = true; return; }
+        if (e.Key == Key.F && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)
+        {
+            OnSearch(this, new RoutedEventArgs());
+            e.Handled = true; return;
+        }
         if (e.Key == Key.F && inGrid) { ToggleFocusedFavorite(); e.Handled = true; return; }
 
         if (inGrid)
@@ -287,6 +357,18 @@ private void PlaySelected()
                     e.Handled = true; return;
                 case Key.Down:
                     StepGridFocus(GridSpan());
+                    e.Handled = true; return;
+                case Key.PageUp:
+                    StepGridFocus(-GridSpan() * GridPageLines());
+                    e.Handled = true; return;
+                case Key.PageDown:
+                    StepGridFocus(GridSpan() * GridPageLines());
+                    e.Handled = true; return;
+                case Key.Home:
+                    FocusGridPosition(0);
+                    e.Handled = true; return;
+                case Key.End:
+                    FocusGridPosition(GridChannels.Count - 1);
                     e.Handled = true; return;
                 case Key.Left:
                     if (!StepGridFocusH(-1)) MoveToSection(-1);
@@ -321,11 +403,20 @@ private void PlaySelected()
 
     // ----- header buttons / PiP / exit -----
 
-    private void OnSearch(object sender, RoutedEventArgs e) => new SearchWindow().Show();
+    private void OnSearch(object sender, RoutedEventArgs e) => OpenSearch();
+    public void OpenSearch(string? query = null)
+    {
+        var w = new SearchWindow();
+        if (!string.IsNullOrEmpty(query)) w.Prefill(query);
+        w.Show();
+    }
     private void OnSettings(object sender, RoutedEventArgs e) => new SettingsWindow().Show();
 
     private async void OnRefresh(object sender, RoutedEventArgs e)
     {
+        if (_refreshing) return;
+        _refreshing = true;
+        BtnRefresh.IsEnabled = false;
         Loading.Visibility = Visibility.Visible;
         LoadingText.Text = "Refreshing channels...";
         try
@@ -338,25 +429,80 @@ private void PlaySelected()
                 ChannelCount.Text = $"{AppState.Instance.Repo.Channels.Count} channels";
             });
         }
-        catch (Exception ex) { Log.Write("refresh failed: " + ex.Message); }
-        await Dispatcher.InvokeAsync(() => Loading.Visibility = Visibility.Collapsed);
+        catch (Exception ex)
+        {
+            Log.Write("refresh failed: " + ex.Message);
+            await Dispatcher.InvokeAsync(() => ShowToast("Refresh failed — keeping existing channels"));
+        }
+        finally
+        {
+            _refreshing = false;
+            await Dispatcher.InvokeAsync(() =>
+            {
+                Loading.Visibility = Visibility.Collapsed;
+                BtnRefresh.IsEnabled = true;
+            });
+        }
+    }
+
+    private void RefreshNowChips()
+    {
+        try
+        {
+            for (var i = 0; i < Grid.Items.Count; i++)
+            {
+                if (Grid.ItemContainerGenerator.ContainerFromIndex(i) is ListBoxItem it
+                    && FindVisualChild<ChannelCard>(it) is { } card)
+                    card.RefreshNowChip();
+            }
+        }
+        catch { }
+    }
+
+    private static T? FindVisualChild<T>(DependencyObject root) where T : DependencyObject
+    {
+        for (var i = 0; i < System.Windows.Media.VisualTreeHelper.GetChildrenCount(root); i++)
+        {
+            var child = System.Windows.Media.VisualTreeHelper.GetChild(root, i);
+            if (child is T match) return match;
+            if (FindVisualChild<T>(child) is { } deeper) return deeper;
+        }
+        return null;
     }
 
     private void SyncPip()
     {
         var p = AppState.Instance.ParkedPlayer;
         if (p == null) { HidePip(); return; }
-        try
+        // The VideoView needs a real HWND before a player can render into
+        // it: attach on the Loaded pass (after this frame is laid out).
+        PipFrame.Visibility = Visibility.Visible;
+        AttachParked();
+    }
+
+    private void AttachParked()
+    {
+        var p = AppState.Instance.ParkedPlayer;
+        if (p == null) { HidePip(); return; }
+        if (ReferenceEquals(MiniView.MediaPlayer, p))
         {
-            MiniView.MediaPlayer = p;
             if (!p.IsPlaying) p.Play();
-            PipFrame.Visibility = Visibility.Visible;
+            return;
         }
-        catch (Exception ex)
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() =>
         {
-            Log.Write("pip attach failed: " + ex.Message);
-            HidePip();
-        }
+            try
+            {
+                MiniView.MediaPlayer = p;
+                if (!p.IsPlaying) p.Play();
+                Log.Write("pip attached: " + (AppState.Instance.ParkedChannel?.Name ?? "?"));
+            }
+            catch (Exception ex)
+            {
+                Log.Write("pip attach failed: " + ex.Message);
+                HidePip();
+            }
+        }));
     }
 
     private void HidePip()

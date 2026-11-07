@@ -18,6 +18,7 @@ public sealed class AppState
     public string? LastOpenedChannelId;
 
     public LibVLC? Lib;
+    public string? LibVlcError { get; private set; }
     public MediaPlayer? ParkedPlayer;
     public Channel? ParkedChannel;
     public string? ParkedCategoryId;
@@ -41,10 +42,23 @@ public sealed class AppState
         });
     }
 
-    public void EnsureLib()
+    public void SetLibVlcError(string message) => LibVlcError = message;
+
+    public LibVLC EnsureLib()
     {
-        if (Lib != null) return;
-        Lib = new LibVLC();
+        if (Lib != null) return Lib;
+        if (!string.IsNullOrWhiteSpace(LibVlcError))
+            throw new InvalidOperationException(LibVlcError);
+        try
+        {
+            Lib = new LibVLC();
+            return Lib;
+        }
+        catch (Exception ex)
+        {
+            LibVlcError = "Video engine could not start: " + ex.Message;
+            throw new InvalidOperationException(LibVlcError, ex);
+        }
     }
 
     // Exactly one parked player may exist. Call before any fresh playback

@@ -19,9 +19,14 @@ public partial class PlayerWindow : Window
     private readonly DispatcherTimer _escTimer = new() { Interval = TimeSpan.FromMilliseconds(600) };
     private readonly DispatcherTimer _hideTimer = new() { Interval = TimeSpan.FromSeconds(4) };
     private readonly DispatcherTimer _clockTimer = new() { Interval = TimeSpan.FromSeconds(1) };
+    private readonly DispatcherTimer _recoveryTimer = new() { Interval = TimeSpan.FromMilliseconds(1200) };
     private readonly string[] _aspects = { "", "16:9", "4:3" };
     private int _aspectIdx;
     private readonly DispatcherTimer _toastTimer = new() { Interval = TimeSpan.FromSeconds(3) };
+    private readonly List<Channel> _failurePlan = new();
+    private int _failurePlanPos;
+    private string? _failurePlanId;
+    private bool _closing;
 
     // Channel guide (TV parity): frozen per-section order, double-Enter
     // opens the full schedule, Esc closes.
@@ -59,14 +64,15 @@ public partial class PlayerWindow : Window
         _hideTimer.Tick += (_, _) => { InfoBar.Visibility = Visibility.Collapsed; Hint.Visibility = Visibility.Collapsed; _hideTimer.Stop(); };
         _clockTimer.Tick += (_, _) => TickClock();
         _toastTimer.Tick += (_, _) => { Toast.Visibility = Visibility.Collapsed; _toastTimer.Stop(); };
+        _recoveryTimer.Tick += (_, _) => RecoverPlayback();
     }
 
     private void StartPlayback()
     {
         try
         {
-            AppState.Instance.EnsureLib();
-            _player = new MediaPlayer(AppState.Instance.Lib);
+            var lib = AppState.Instance.EnsureLib();
+            _player = new MediaPlayer(lib);
             _player.Buffering += OnBuffering;
             _player.Playing += OnPlaying;
             _player.EncounteredError += OnPlayerError;
@@ -75,7 +81,7 @@ public partial class PlayerWindow : Window
         catch (Exception ex)
         {
             Log.Write("player start FAILED: " + ex);
-            ShowToast("Could not start playback");
+            ShowToast("Video engine unavailable");
             return;
         }
         PlayChannel(_channel);
@@ -96,7 +102,8 @@ public partial class PlayerWindow : Window
         ShowOsd();
         try
         {
-            _media = new Media(AppState.Instance.Lib, channel.Url, FromType.FromLocation);
+            var lib = AppState.Instance.EnsureLib();
+            _media = new Media(lib, channel.Url, FromType.FromLocation);
             _player.Play(_media);
             Log.Write("playing: " + channel.Name);
         }
@@ -107,21 +114,80 @@ public partial class PlayerWindow : Window
         }
     }
 
-    private void OnBuffering(object? sender, MediaPlayerBufferingEventArgs e) => Dispatcher.Invoke(() =>
-        Buffering.Visibility = e.Cache < 100 ? Visibility.Visible : Visibility.Collapsed);
-
-    private void OnPlaying(object? sender, EventArgs e) => Dispatcher.Invoke(() =>
+    private void OnBuffering(object? sender, MediaPlayerBufferingEventArgs e)
     {
-        Buffering.Visibility = Visibility.Collapsed;
-        AppState.Instance.Repo.RecordWatch(_channel.Id);
-    });
+        if (_closing || _parked) return;
+        try
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (!_closing && !_parked)
+                    Buffering.Visibility = e.Cache < 100 ? Visibility.Visible : Visibility.Collapsed;
+            });
+        }
+        catch { }
+    }
 
-    private void OnPlayerError(object? sender, EventArgs e) => Dispatcher.Invoke(() =>
+    private void OnPlaying(object? sender, EventArgs e)
     {
-        Buffering.Visibility = Visibility.Collapsed;
-        ShowToast("Stream failed — try another channel (Esc)");
-        Log.Write("playback error: " + _channel.Url);
-    });
+        if (_closing || _parked) return;
+        try
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_closing || _parked) return;
+                _recoveryTimer.Stop();
+                _failurePlan.Clear();
+                _failurePlanPos = 0;
+                _failurePlanId = null;
+                Buffering.Visibility = Visibility.Collapsed;
+                AppState.Instance.Repo.RecordWatch(_channel.Id);
+            });
+        }
+        catch { }
+    }
+
+    private void OnPlayerError(object? sender, EventArgs e)
+    {
+        if (_closing || _parked) return;
+        try
+        {
+            Dispatcher.BeginInvoke(() =>
+            {
+                if (_closing || _parked) return;
+                Buffering.Visibility = Visibility.Collapsed;
+                if (_failurePlanId != _channel.Id)
+                {
+                    _failurePlanId = _channel.Id;
+                    _failurePlanPos = 0;
+                    _failurePlan.Clear();
+                    _failurePlan.Add(_channel);
+                    _failurePlan.AddRange(AppState.Instance.Repo.FindAlternates(_channel).Take(3));
+                }
+                ShowToast(_failurePlanPos == 0 ? "Signal glitch — reconnecting..." : "Trying alternate source...");
+                Log.Write("playback error: " + _channel.Url);
+                _recoveryTimer.Stop();
+                _recoveryTimer.Start();
+            });
+        }
+        catch { }
+    }
+
+    private void RecoverPlayback()
+    {
+        _recoveryTimer.Stop();
+        if (_closing || _parked || _player == null) return;
+        if (_failurePlanPos < _failurePlan.Count)
+        {
+            PlayChannel(_failurePlan[_failurePlanPos++]);
+            return;
+        }
+        _failurePlan.Clear();
+        _failurePlanPos = 0;
+        _failurePlanId = null;
+        ShowToast("Channel not working — moving on");
+        SwitchChannel(1);
+    }
 
     private void UpdateEpgLine()
     {
@@ -313,6 +379,7 @@ public partial class PlayerWindow : Window
             AppState.Instance.ParkedChannel = _channel;
             AppState.Instance.ParkedCategoryId = _catId;
             AppState.Instance.ParkedCategoryName = _catName;
+            DetachPlayerHandlers();
             _player = null;
             _parked = true;
         }
@@ -446,6 +513,12 @@ public partial class PlayerWindow : Window
         PlayChannel(channels[at]);
     }
 
+    private void OnVideoClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (_guideOpen) return;
+        ShowOsd(); // click anywhere on video re-reveals the info bar
+    }
+
     private void ShowExitOverlay()
     {
         _exitOpen = true;
@@ -469,10 +542,13 @@ public partial class PlayerWindow : Window
 
     private void Cleanup()
     {
+        _closing = true;
         _escTimer.Stop();
         _hideTimer.Stop();
         _clockTimer.Stop();
         _toastTimer.Stop();
+        _recoveryTimer.Stop();
+        DetachPlayerHandlers();
         try { if (Video.MediaPlayer != null) Video.MediaPlayer = null; } catch { }
         if (!_parked)
         {
@@ -480,11 +556,16 @@ public partial class PlayerWindow : Window
             try { _player?.Dispose(); } catch { }
             try { _media?.Dispose(); } catch { }
         }
-        else
-        {
-            try { _media?.Dispose(); } catch { }
-        }
+        // Parked: player + media survive — AppState's PiP keeps them playing.
         _player = null;
         _media = null;
+    }
+
+    private void DetachPlayerHandlers()
+    {
+        if (_player == null) return;
+        try { _player.Buffering -= OnBuffering; } catch { }
+        try { _player.Playing -= OnPlaying; } catch { }
+        try { _player.EncounteredError -= OnPlayerError; } catch { }
     }
 }
