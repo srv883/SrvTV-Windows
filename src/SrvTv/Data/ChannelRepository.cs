@@ -543,6 +543,7 @@ public sealed class ChannelRepository
         return id switch
         {
             "fav" => GetFavoriteChannels(),
+            OfficialApps.CategoryId => OfficialApps.Cards.ToList(),
             "odia" => GetOdiaChannels(),
             "all" => snapshot,
             "india" => GetIndiaChannels(),
@@ -817,6 +818,7 @@ public sealed class ChannelRepository
         var result = new List<Category>
         {
             new() { Id = "fav", Name = "Favorites", ChannelCount = _favorites.Count, SortOrder = -3 },
+            new() { Id = OfficialApps.CategoryId, Name = OfficialApps.CategoryName, ChannelCount = OfficialApps.Cards.Count, SortOrder = -2 },
             new() { Id = "india", Name = "India", ChannelCount = GetIndiaChannels().Count, SortOrder = -1 },
             new() { Id = "all", Name = "All Channels", ChannelCount = snapshot.Count, SortOrder = 0 },
             new() { Id = "football", Name = "Football", ChannelCount = GetFootballChannels().Count, SortOrder = 1 },

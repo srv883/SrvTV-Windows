@@ -60,11 +60,20 @@ public partial class ChannelCard : UserControl
             ? Visibility.Visible : Visibility.Collapsed;
         OffChip.Visibility = ch.IsWorking ? Visibility.Collapsed : Visibility.Visible;
 
+        // Official-app shortcut: no star or language, blurb instead of category.
+        var shortcut = Data.OfficialApps.IsShortcut(ch);
+        Star.Visibility = shortcut ? Visibility.Collapsed : Visibility.Visible;
+        LangPill.Visibility = shortcut ? Visibility.Collapsed : Visibility.Visible;
+        if (CtxPlay != null) CtxPlay.Header = shortcut ? "Open" : "Watch";
+        if (CtxFav != null) CtxFav.Visibility = shortcut ? Visibility.Collapsed : Visibility.Visible;
+        if (shortcut) Category.Text = ch.Category;
+
         var name = ch.Name;
         var detail = ch.Category;
         if (ch.Language.Length > 0) detail += "  •  " + ch.Language;
         if (ch.IsHD) detail += "  •  HD";
         detail += ch.IsWorking ? "" : "  •  offline";
+        if (shortcut) detail += "\nOpens the official site in your browser";
         Card.ToolTip = $"{name}\n{detail}";
 
         var (a, b) = Palettes[(int)((uint)Data.M3UParser.JavaHash(ch.Name) % (uint)Palettes.Length)];
@@ -154,7 +163,7 @@ public partial class ChannelCard : UserControl
 
     private void OnCtxFav(object sender, RoutedEventArgs e)
     {
-        if (DataContext is not Channel ch) return;
+        if (DataContext is not Channel ch || Data.OfficialApps.IsShortcut(ch)) return;
         var repo = AppState.Instance.Repo;
         repo.ToggleFavorite(ch.Id);
         repo.RefreshFavorites();

@@ -262,6 +262,7 @@ public partial class MainWindow : Window
         var list = GridChannels;
         if (pos < 0 || pos >= list.Count) return;
         var ch = list[pos];
+        if (Data.OfficialApps.IsShortcut(ch)) return;
         var repo = AppState.Instance.Repo;
         var wasFav = repo.IsFavorite(ch.Id);
         repo.ToggleFavorite(ch.Id);
@@ -316,6 +317,12 @@ private void PlaySelected()
 
     private void PlayChannel(Channel ch)
     {
+        if (Data.OfficialApps.IsShortcut(ch))
+        {
+            Data.OfficialApps.Open(ch);
+            ShowToast($"Opening {ch.Name} in your browser");
+            return;
+        }
         AppState.Instance.LastOpenedChannelId = ch.Id;
         AppState.Instance.ReleaseParked(); // never two streams at once
         HidePip();
