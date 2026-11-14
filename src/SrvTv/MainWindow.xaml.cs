@@ -539,6 +539,7 @@ public partial class MainWindow : Window
             {
                 MiniView.MediaPlayer = p;
                 if (!p.IsPlaying) p.Play();
+                else RebindVideo(p);
                 Log.Write("pip attached: " + (AppState.Instance.ParkedChannel?.Name ?? "?"));
             }
             catch (Exception ex)
@@ -547,6 +548,40 @@ public partial class MainWindow : Window
                 HidePip();
             }
         }));
+    }
+
+    // VLC keeps drawing into the window the picture started in (the closed
+    // full player), so the mini player would stay black with sound only.
+    // Switching the video track off and on makes VLC open a new video
+    // output in the mini player's window, without reconnecting the stream.
+    private void RebindVideo(LibVLCSharp.Shared.MediaPlayer p)
+    {
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
+        timer.Tick += (_, _) =>
+        {
+            timer.Stop();
+            if (!ReferenceEquals(MiniView.MediaPlayer, p)) return;
+            try
+            {
+                var track = p.VideoTrack;
+                if (track < 0 && p.VideoTrackCount > 0)
+                    track = p.VideoTrackDescription.Select(t => t.Id).FirstOrDefault(id => id >= 0);
+                if (track >= 0)
+                {
+                    p.SetVideoTrack(-1);
+                    p.SetVideoTrack(track);
+                    Log.Write($"pip video rebound (track {track})");
+                }
+                else
+                {
+                    p.Stop();
+                    p.Play();
+                    Log.Write("pip video restarted");
+                }
+            }
+            catch (Exception ex) { Log.Write("pip rebind failed: " + ex.Message); }
+        };
+        timer.Start();
     }
 
     private void HidePip()
