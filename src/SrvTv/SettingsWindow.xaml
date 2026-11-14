@@ -48,6 +48,27 @@
                 </StackPanel>
             </Border>
 
+            <!-- Updates -->
+            <Border Background="{StaticResource Surface1Brush}" BorderBrush="{StaticResource StrokeBrush}"
+                    BorderThickness="1" CornerRadius="14" Padding="22,18" Margin="0,0,0,14">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock x:Name="VersionText" Text="Srv TV" Foreground="White" FontSize="16" FontWeight="SemiBold"/>
+                        <TextBlock Text="New versions download by themselves and install when you close the app."
+                                   Foreground="{StaticResource TextSecondaryBrush}" FontSize="13"
+                                   Margin="0,4,0,0" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="UpdateStatus" Text="" Foreground="{StaticResource FocusBlueBrush}"
+                                   FontSize="13" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <Button x:Name="BtnCheckUpdate" Grid.Column="1" Style="{StaticResource Btn}"
+                            Content="Check for updates" VerticalAlignment="Center" Click="OnCheckUpdate"/>
+                </Grid>
+            </Border>
+
             <!-- Troubleshooting -->
             <Border Background="{StaticResource Surface1Brush}" BorderBrush="{StaticResource StrokeBrush}"
                     BorderThickness="1" CornerRadius="14" Padding="22,18">

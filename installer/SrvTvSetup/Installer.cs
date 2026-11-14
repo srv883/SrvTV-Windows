@@ -26,6 +26,8 @@ namespace SrvTvSetup
         private static string StartMenuLink =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), AppName + ".lnk");
 
+        public static string DesktopLinkPath => DesktopLink;
+
         private static string DesktopLink =>
             Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.DesktopDirectory), AppName + ".lnk");
 

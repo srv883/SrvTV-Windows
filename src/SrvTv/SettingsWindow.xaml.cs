@@ -12,6 +12,17 @@ public partial class SettingsWindow : Window
         if (Application.Current.MainWindow is { IsLoaded: true } main && !ReferenceEquals(main, this))
             Owner = main;
         UiTest.Place(this, 720, 600);
+        VersionText.Text = $"Srv TV {Updater.CurrentText}";
+        if (!Updater.Enabled) UpdateStatus.Text = "Updates are on for copies installed with SrvTV-Setup.exe.";
+    }
+
+    private async void OnCheckUpdate(object sender, RoutedEventArgs e)
+    {
+        BtnCheckUpdate.IsEnabled = false;
+        UpdateStatus.Text = "Checking...";
+        try { UpdateStatus.Text = await Updater.CheckAsync(); }
+        catch (Exception ex) { UpdateStatus.Text = "Check failed: " + ex.Message; }
+        BtnCheckUpdate.IsEnabled = true;
     }
 
     private async void OnRefresh(object sender, RoutedEventArgs e)

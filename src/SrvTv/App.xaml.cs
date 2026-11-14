@@ -36,6 +36,7 @@ public partial class App : Application
         EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
             new RoutedEventHandler((sender, _) => { if (sender is Window w) UseDarkTitleBar(w); }));
         base.OnStartup(e);
+        Updater.StartBackgroundChecks();
     }
 
     [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
@@ -58,6 +59,8 @@ public partial class App : Application
     protected override void OnExit(ExitEventArgs e)
     {
         try { AppState.Instance.Shutdown(); } catch { }
+        // A downloaded update installs quietly once the app has closed.
+        if (Updater.PendingSetup != null) Updater.Apply(relaunch: false);
         Log.Write("=== exit ===");
         base.OnExit(e);
     }

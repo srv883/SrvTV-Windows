@@ -60,6 +60,15 @@
                 <!-- Actions -->
                 <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right"
                             VerticalAlignment="Center">
+                    <Button x:Name="BtnUpdate" Click="OnUpdateNow" Style="{StaticResource BtnPrimary}"
+                            Height="42" Padding="14,0" Margin="0,0,10,0" Visibility="Collapsed"
+                            Focusable="False" ToolTip="Install the new version and reopen Srv TV">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE896;" FontFamily="{StaticResource IconFont}" FontSize="14"
+                                       VerticalAlignment="Center" Margin="0,0,8,0"/>
+                            <TextBlock x:Name="UpdateText" Text="Update ready" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
                     <Button x:Name="BtnSearch" Click="OnSearch" Style="{StaticResource Btn}"
                             Height="42" Padding="14,0" Margin="0,0,10,0" ToolTip="Search channels (Ctrl+F)"
                             Background="{StaticResource Surface0Brush}">

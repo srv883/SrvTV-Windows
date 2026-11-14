@@ -58,7 +58,10 @@ namespace SrvTvSetup
                 {
                     var dir = dirArg != null ? dirArg.Substring(5) : Installer.InstalledDir() ?? Installer.DefaultDir;
                     if (a.Contains("/portable")) Installer.Unpack(dir, (p, s) => { });
-                    else Installer.Install(dir, true, (p, s) => { });
+                    else Installer.Install(dir, File.Exists(Installer.DesktopLinkPath) || Installer.InstalledDir() == null, (p, s) => { });
+                    // /launch: reopen Srv TV after a self-update.
+                    if (a.Contains("/launch"))
+                        Process.Start(new ProcessStartInfo(Path.Combine(dir, Installer.ExeName)) { WorkingDirectory = dir });
                     return 0;
                 }
                 catch (Exception ex)

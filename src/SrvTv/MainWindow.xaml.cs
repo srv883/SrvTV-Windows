@@ -29,6 +29,8 @@ public partial class MainWindow : Window
                 PlayChannel(ch);
         });
         Loaded += async (_, _) => await BootAsync();
+        Updater.UpdateReady += () => Dispatcher.BeginInvoke(ShowUpdateReady);
+        Loaded += (_, _) => { if (Updater.PendingVersion != null) ShowUpdateReady(); };
         SizeChanged += (_, _) =>
         {
             if (PipFrame.Visibility == Visibility.Visible) PlacePip();
@@ -704,6 +706,21 @@ public partial class MainWindow : Window
 
     private void HideExitOverlay() => ExitOverlay.Visibility = Visibility.Collapsed;
     private void OnExitNo(object sender, RoutedEventArgs e) => HideExitOverlay();
+
+    private void ShowUpdateReady()
+    {
+        if (Updater.PendingVersion == null) return;
+        UpdateText.Text = $"Update to {Updater.PendingVersion.ToString(3)}";
+        BtnUpdate.Visibility = Visibility.Visible;
+        ShowToast($"Srv TV {Updater.PendingVersion.ToString(3)} is ready. It installs when you close the app, or click Update.");
+    }
+
+    private void OnUpdateNow(object sender, RoutedEventArgs e)
+    {
+        if (!Updater.Apply(relaunch: true)) { ShowToast("Couldn't start the update. Try again later."); return; }
+        AppState.Instance.Shutdown();
+        Application.Current.Shutdown();
+    }
 
     private void OnExitYes(object sender, RoutedEventArgs e)
     {
