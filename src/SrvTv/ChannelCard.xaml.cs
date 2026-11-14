@@ -73,7 +73,7 @@ public partial class ChannelCard : UserControl
         if (ch.Language.Length > 0) detail += "  •  " + ch.Language;
         if (ch.IsHD) detail += "  •  HD";
         detail += ch.IsWorking ? "" : "  •  offline";
-        if (shortcut) detail += "\nOpens the official site in your browser";
+        if (shortcut) detail += "\nOpens inside Srv TV (sign in once)";
         Card.ToolTip = $"{name}\n{detail}";
 
         var (a, b) = Palettes[(int)((uint)Data.M3UParser.JavaHash(ch.Name) % (uint)Palettes.Length)];

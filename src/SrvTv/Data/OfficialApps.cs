@@ -25,18 +25,25 @@ public static class OfficialApps
 
     public static void Open(Channel ch)
     {
-        if (!IsShortcut(ch)) return;
         try
         {
-            System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
-            {
-                FileName = ch.Url,
-                UseShellExecute = true,
-            });
+            new WebPlayerWindow(ch).Show();
         }
         catch (Exception e)
         {
-            Log.Write($"official app open failed: {ch.Url} {e.Message}");
+            Log.Write($"web player open failed, falling back to browser: {ch.Url} {e.Message}");
+            try
+            {
+                System.Diagnostics.Process.Start(new System.Diagnostics.ProcessStartInfo
+                {
+                    FileName = ch.Url,
+                    UseShellExecute = true,
+                });
+            }
+            catch (Exception ex)
+            {
+                Log.Write($"official app open failed: {ch.Url} {ex.Message}");
+            }
         }
     }
 

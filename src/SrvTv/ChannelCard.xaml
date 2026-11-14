@@ -15,6 +15,16 @@
                        TextWrapping="Wrap" TextAlignment="Center" Margin="20,10,20,26"
                        Foreground="White" FontSize="20" FontWeight="Bold"/>
 
+            <!-- Bottom scrim so the category label reads on bright logos -->
+            <Border CornerRadius="0,0,16,16" Height="44" VerticalAlignment="Bottom" IsHitTestVisible="False">
+                <Border.Background>
+                    <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
+                        <GradientStop Color="#00000000" Offset="0"/>
+                        <GradientStop Color="#73000000" Offset="1"/>
+                    </LinearGradientBrush>
+                </Border.Background>
+            </Border>
+
             <!-- Hover glow -->
             <Border x:Name="Glow" CornerRadius="16" BorderBrush="#5AC8FA"
                     BorderThickness="3" Opacity="0" IsHitTestVisible="False">
@@ -24,11 +34,10 @@
             </Border>
 
             <!-- Favorite star (clickable) -->
-            <Button x:Name="Star" Width="44" Height="44" Background="Transparent"
-                    BorderThickness="0" FontSize="30" Padding="0"
-                    HorizontalAlignment="Left" VerticalAlignment="Top"
-                    Click="OnStarClick" Cursor="Hand"
-                    ToolTip="Add / remove from Favorites"/>
+            <Button x:Name="Star" Width="38" Height="38" Style="{StaticResource BtnGhost}"
+                    FontSize="24" FontWeight="Normal" Padding="0" Margin="4,4,0,0" Focusable="False"
+                    HorizontalAlignment="Left" VerticalAlignment="Top" HorizontalContentAlignment="Center"
+                    Click="OnStarClick" ToolTip="Add to / remove from Favorites (F)"/>
 
             <!-- Playing now chip -->
             <Border x:Name="NowChip" Visibility="Collapsed" CornerRadius="8"
@@ -70,7 +79,7 @@
                 <StackPanel Orientation="Horizontal">
                     <TextBlock Text="▶" Foreground="#5AC8FA" FontSize="16" FontWeight="Bold"
                                VerticalAlignment="Center"/>
-                    <TextBlock Text="  Watch" Foreground="White" FontSize="15" FontWeight="Bold"
+                    <TextBlock Text="  Watch" Foreground="White" FontSize="15" FontWeight="SemiBold"
                                VerticalAlignment="Center"/>
                 </StackPanel>
             </Border>

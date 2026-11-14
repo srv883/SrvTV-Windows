@@ -29,6 +29,9 @@ public sealed class ChannelRepository
     private readonly Dictionary<string, long> _watchTimes = new();
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private readonly SemaphoreSlim _probeGate = new(1, 1);
+    private readonly SemaphoreSlim _renewGate = new(1, 1);
+    private CancellationTokenSource? _renewCts;
+    private Task? _renewTask;
 
     public Action<string>? ProgressChanged;
     public Action<bool>? BackgroundBusyChanged;
@@ -71,9 +74,34 @@ public sealed class ChannelRepository
         ["iptv_org_kids"] = null,
     };
 
-    private const int CacheVersion = 14;
+    private const int CacheVersion = 17;
     private const int MaxSeedFavorites = 60;
     private const int MinCategoryCount = 8;
+    private const int RecentLimit = 50;
+
+    // IPTV panel (EasyISP24): the playlist now needs a per-IP token that
+    // /watch/list mints for ~12h. The token rides inside every stream URL,
+    // so we cache it and rebuild the playlist before it expires.
+    private const string PanelBase = "http://103.151.60.162:2122";
+    private const long PanelTokenTtlMs = 10L * 60 * 60 * 1000;
+    private const long PanelRenewIntervalMs = 6L * 60 * 60 * 1000;
+    private const string PanelUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
+    private static readonly HttpClient PanelHttp = new() { Timeout = TimeSpan.FromSeconds(6) };
+
+    // The S20 FE web server (IPTVApp/web, Tailscale only) sits on the home
+    // network and can reach the panel even when this PC's carrier blocks it.
+    // Panel streams are fetched through its /p proxy using a token the phone
+    // mints, so this machine never talks to 103.151.60.162 directly.
+    private const string PhoneProxyBase = "http://100.73.53.88:8787";
+    private static readonly HttpClient PhoneHttp = new() { Timeout = TimeSpan.FromSeconds(12) };
+
+    // The premium panel feeds the user watches most. Their tvg-ids are the
+    // panel's own ids, stable across token/url churn, so both the favorites
+    // seeding and the "top of Favorites" order match on them.
+    private static readonly string[] PinnedPanelTvgIds =
+    {
+        "bz8n", "bbym", "b22h", "b1au", "bfxw", "bqj2", "b77z", "bi9k",
+    };
 
     private static readonly Dictionary<string, string> NameOverrides = new()
     {
@@ -148,6 +176,7 @@ public sealed class ChannelRepository
     public async Task InitializeAsync()
     {
         await BootAsync(null).ConfigureAwait(false);
+        StartPanelAutoRenew();
     }
 
     private void EnsurePlaylistState()
@@ -293,7 +322,13 @@ public sealed class ChannelRepository
         EnsurePlaylistState();
         // Show the disk cache instantly when present; refresh decision below.
         var hadCache = TryLoadCache();
-        if (hadCache && IsCacheFresh()) return;
+        if (hadCache && IsCacheFresh())
+        {
+            // Re-evaluate cached health flags on every launch. The probe is
+            // background-only, so a slow source cannot delay first paint.
+            _ = CompleteProbeAsync();
+            return;
+        }
         // Stale or empty: fetch + publish fast with NO probing (UI up in
         // seconds), then verify favorites first and the rest in background.
         progress?.Invoke("Downloading playlists...");
@@ -332,6 +367,7 @@ public sealed class ChannelRepository
             .SelectMany(r => r.Item2)
             .ToList();
         allChannels.AddRange(LoadBundledChannels());
+        allChannels.AddRange(await LoadPanelChannelsAsync().ConfigureAwait(false));
         return Dedupe(FilterChannels(allChannels)).Select(WithOverrides).ToList();
     }
 
@@ -342,6 +378,7 @@ public sealed class ChannelRepository
             _channels.Clear();
             _channels.AddRange(channels);
         }
+        EnsurePinnedSportsFavorites();
         UpdateFavoriteStatus();
         ApplyWatchTimes();
         BuildCategories();
@@ -433,10 +470,230 @@ public sealed class ChannelRepository
         try
         {
             var asm = typeof(ChannelRepository).Assembly;
-            using var s = asm.GetManifestResourceStream("odia-extra.m3u");
+            var channels = new List<Channel>();
+            foreach (var (resource, language) in new[]
+            {
+                ("odia-extra.m3u", "odia"),
+                ("mirrors.m3u", (string?)null),
+            })
+            {
+                using var s = asm.GetManifestResourceStream(resource);
+                if (s == null) continue;
+                using var r = new StreamReader(s);
+                channels.AddRange(M3UParser.ParseM3UContent(
+                    r.ReadToEnd(), ChannelSource.FREE_IPTV, language));
+            }
+            return channels;
+        }
+        catch { return new List<Channel>(); }
+    }
+
+    // Cached panel token, refreshed from /watch/list when it ages out. The
+    // panel binds the token to the requesting IP, so each machine mints its
+    // own instead of sharing a link that would 403 elsewhere.
+    private async Task<string?> PanelTokenAsync()
+    {
+        var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+        var cached = _prefs.GetString("panel_token", "");
+        var at = _prefs.GetLong("panel_token_at", 0L);
+        if (!string.IsNullOrWhiteSpace(cached) && now - at is >= 0 and < PanelTokenTtlMs)
+            return cached;
+        var fresh = await FetchPanelTokenAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(fresh))
+            return string.IsNullOrWhiteSpace(cached) ? null : cached;
+        _prefs.PutString("panel_token", fresh);
+        _prefs.PutLong("panel_token_at", now);
+        _prefs.Apply();
+        return fresh;
+    }
+
+    private static async Task<string?> FetchPanelTokenAsync()
+    {
+        try
+        {
+            using var req = new HttpRequestMessage(HttpMethod.Get, PanelBase + "/watch/list");
+            req.Headers.TryAddWithoutValidation("User-Agent", PanelUserAgent);
+            using var resp = await PanelHttp.SendAsync(req).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode) return null;
+            var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.TryGetProperty("token", out var t) ? t.GetString() : null;
+        }
+        catch { return null; }
+    }
+
+    private async Task<List<Channel>> LoadPanelChannelsAsync()
+    {
+        var token = await PanelTokenAsync().ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(token))
+        {
+            var first = await FetchPanelPlaylistAsync(token).ConfigureAwait(false);
+            if (first.Count > 0) return first;
+            // A stale/blocked token answers 403; drop it and mint a fresh one.
+            _prefs.PutString("panel_token", "");
+            _prefs.PutLong("panel_token_at", 0L);
+            _prefs.Apply();
+            var retry = await PanelTokenAsync().ConfigureAwait(false);
+            if (!string.IsNullOrWhiteSpace(retry))
+            {
+                var second = await FetchPanelPlaylistAsync(retry).ConfigureAwait(false);
+                if (second.Count > 0) return second;
+            }
+        }
+        // Direct panel unreachable (the carrier blocks its address here):
+        // let the phone server on Tailscale proxy it from the home network.
+        var viaPhone = await LoadPanelViaPhoneAsync().ConfigureAwait(false);
+        if (viaPhone.Count > 0) return viaPhone;
+        // Panel down / blocked: keep the last-known channel list so Sony
+        // Sports / Star Sports never vanish from the library on a refresh.
+        return LoadPanelFallback(null);
+    }
+
+    // Mint a token through the phone proxy (so it is bound to the phone's
+    // IP), then wrap each panel URL so the phone fetches the stream for us.
+    private async Task<List<Channel>> LoadPanelViaPhoneAsync()
+    {
+        var token = await FetchPhonePanelTokenAsync().ConfigureAwait(false);
+        if (string.IsNullOrWhiteSpace(token)) return new List<Channel>();
+        _prefs.PutLong("panel_phone_token_at", DateTimeOffset.UtcNow.ToUnixTimeMilliseconds());
+        _prefs.Apply();
+        // Ids stay derived from the original panel URLs, so favorites hold.
+        return LoadPanelFallback(token)
+            .Select(c => c.With(url: PhoneProxyBase + "/p?u=" + Uri.EscapeDataString(c.Url)))
+            .ToList();
+    }
+
+    private static async Task<string?> FetchPhonePanelTokenAsync()
+    {
+        try
+        {
+            var target = PhoneProxyBase + "/p?u=" +
+                Uri.EscapeDataString(PanelBase + "/watch/list");
+            using var req = new HttpRequestMessage(HttpMethod.Get, target);
+            req.Headers.TryAddWithoutValidation("User-Agent", PanelUserAgent);
+            using var resp = await PhoneHttp.SendAsync(req).ConfigureAwait(false);
+            if (!resp.IsSuccessStatusCode) return null;
+            var body = await resp.Content.ReadAsStringAsync().ConfigureAwait(false);
+            using var doc = JsonDocument.Parse(body);
+            return doc.RootElement.TryGetProperty("token", out var t) ? t.GetString() : null;
+        }
+        catch { return null; }
+    }
+
+    // The phone's panel token ages out after ~12h while this app stays open.
+    // Re-mint it in the background and swap it inside the already-proxied
+    // URLs: the channel ids stay untouched, so favorites and playback hold.
+    public void StartPanelAutoRenew()
+    {
+        if (_renewTask != null) return;
+        _renewCts = new CancellationTokenSource();
+        _renewTask = Task.Run(() => PanelAutoRenewLoopAsync(_renewCts.Token));
+    }
+
+    private async Task PanelAutoRenewLoopAsync(CancellationToken ct)
+    {
+        while (!ct.IsCancellationRequested)
+        {
+            try { await EnsurePanelTokenFreshAsync().ConfigureAwait(false); } catch { }
+            try { await Task.Delay(TimeSpan.FromMinutes(15), ct).ConfigureAwait(false); }
+            catch { return; }
+        }
+    }
+
+    public async Task<bool> EnsurePanelTokenFreshAsync(bool force = false)
+    {
+        if (!await _renewGate.WaitAsync(0).ConfigureAwait(false)) return false;
+        try
+        {
+            lock (_dataLock)
+            {
+                if (!_channels.Any(IsPhonePanelChannel)) return false;
+            }
+            var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
+            var at = _prefs.GetLong("panel_phone_token_at", 0L);
+            if (!force && at > 0 && now - at is >= 0 and < PanelRenewIntervalMs)
+                return false;
+            var token = await FetchPhonePanelTokenAsync().ConfigureAwait(false);
+            if (string.IsNullOrWhiteSpace(token)) return false;
+            var changed = 0;
+            lock (_dataLock)
+            {
+                for (var i = 0; i < _channels.Count; i++)
+                {
+                    var ch = _channels[i];
+                    if (!IsPhonePanelChannel(ch)) continue;
+                    var url = RenewPhonePanelUrl(ch.Url, token);
+                    if (url == ch.Url) continue;
+                    _channels[i] = ch.With(url: url);
+                    changed++;
+                }
+            }
+            _prefs.PutLong("panel_phone_token_at", now);
+            _prefs.Apply();
+            if (changed > 0)
+            {
+                CacheChannels(updateTimestamp: false);
+                Log.Write($"panel token auto-renewed via phone; rewrote {changed} urls");
+            }
+            return changed > 0;
+        }
+        catch (Exception ex) { Log.Write("panel auto-renew failed: " + ex.Message); return false; }
+        finally { _renewGate.Release(); }
+    }
+
+    private static bool IsPhonePanelChannel(Channel ch)
+    {
+        var prefix = PhoneProxyBase + "/p?u=";
+        if (!ch.Url.StartsWith(prefix, StringComparison.Ordinal)) return false;
+        try
+        {
+            return Uri.UnescapeDataString(ch.Url[prefix.Length..])
+                .Contains("/play/", StringComparison.Ordinal);
+        }
+        catch { return false; }
+    }
+
+    private static string RenewPhonePanelUrl(string url, string token)
+    {
+        var prefix = PhoneProxyBase + "/p?u=";
+        if (!url.StartsWith(prefix, StringComparison.Ordinal)) return url;
+        string inner;
+        try { inner = Uri.UnescapeDataString(url[prefix.Length..]); }
+        catch { return url; }
+        if (!inner.Contains("/play/", StringComparison.Ordinal)
+            || !inner.Contains("token=", StringComparison.Ordinal)) return url;
+        var renewed = System.Text.RegularExpressions.Regex.Replace(
+            inner, "token=[^&\\s]*", "token=" + token);
+        return prefix + Uri.EscapeDataString(renewed);
+    }
+
+    // Last-known panel playlist shipped with the app. Used when the panel
+    // is unreachable so premium channels stay listed (and can play again
+    // as soon as the panel is back with a fresh token).
+    private static List<Channel> LoadPanelFallback(string? token)
+    {
+        try
+        {
+            var asm = typeof(ChannelRepository).Assembly;
+            using var s = asm.GetManifestResourceStream("panel.m3u");
             if (s == null) return new List<Channel>();
             using var r = new StreamReader(s);
-            return M3UParser.ParseM3UContent(r.ReadToEnd(), ChannelSource.FREE_IPTV, "odia");
+            var text = r.ReadToEnd();
+            if (!string.IsNullOrWhiteSpace(token))
+                text = System.Text.RegularExpressions.Regex.Replace(
+                    text, "token=[^&\\s]*", "token=" + token);
+            return M3UParser.ParseM3UContent(text, ChannelSource.FREE_IPTV, null);
+        }
+        catch { return new List<Channel>(); }
+    }
+
+    private static async Task<List<Channel>> FetchPanelPlaylistAsync(string token)
+    {
+        try
+        {
+            return await M3UParser
+                .ParseFromUrlAsync($"{PanelBase}/playlist.m3u8?hls&token={token}")
+                .ConfigureAwait(false);
         }
         catch { return new List<Channel>(); }
     }
@@ -543,6 +800,7 @@ public sealed class ChannelRepository
         return id switch
         {
             "fav" => GetFavoriteChannels(),
+            "recent" => GetRecentChannels(),
             OfficialApps.CategoryId => OfficialApps.Cards.ToList(),
             "odia" => GetOdiaChannels(),
             "all" => snapshot,
@@ -644,10 +902,42 @@ public sealed class ChannelRepository
     {
         var favs = Channels.Where(c => _favorites.Contains(c.Id)).ToList();
         return favs
-            .OrderBy(FavRank)
-            .ThenBy(ch => FavRank(ch) == int.MaxValue ? ch.Category.ToLowerInvariant() : "")
+            .OrderBy(ch => IsSports(ch) ? 0 : 1)
+            .ThenBy(ch => IsSports(ch) ? 0 : FavRank(ch))
+            .ThenBy(ch => IsSports(ch) ? "" : (FavRank(ch) == int.MaxValue ? ch.Category.ToLowerInvariant() : ""))
             .ThenByDescending(ch => _watchTimes.TryGetValue(ch.Id, out var ts) ? ts : ch.LastWatched)
             .ThenBy(ch => ch.Name.ToLowerInvariant())
+            .ToList();
+    }
+
+    // Sports favorites lead the list, most recently watched first. Panel
+    // feeds carry the panel's generic "Network" group, so match names too.
+    private static readonly string[] SportsNameHints =
+    {
+        "sport", "spor ", "cricket", "football", "soccer", " ten ", "willow",
+        "bein", "espn", "dazn", "eurosport", "wwe", " ufc ", " nba ", " nfl ", " f1 ", "fifa",
+    };
+
+    private static bool IsSports(Channel ch)
+    {
+        if (FavRank(ch) == 0) return true;
+        var text = " " + (ch.Name + " " + ch.Category + " " + ch.TvgName).ToLowerInvariant() + " ";
+        return SportsNameHints.Any(text.Contains);
+    }
+
+    // Most recently watched channels, newest first (the Recent tab).
+    public List<Channel> GetRecentChannels()
+    {
+        var snapshot = Channels;
+        List<KeyValuePair<string, long>> watched;
+        lock (_dataLock) watched = _watchTimes.ToList();
+        var byId = new Dictionary<string, Channel>();
+        foreach (var c in snapshot) byId.TryAdd(c.Id, c);
+        return watched
+            .Where(kv => byId.ContainsKey(kv.Key))
+            .OrderByDescending(kv => kv.Value)
+            .Take(RecentLimit)
+            .Select(kv => byId[kv.Key])
             .ToList();
     }
 
@@ -742,6 +1032,45 @@ public sealed class ChannelRepository
         BuildCategories();
     }
 
+    // Seed the premium panel feeds into Favorites once. Relinking by name
+    // hash keeps them across panel token/url rebuilds, and the one-time
+    // marker lets the user remove one later without it coming back.
+    private void EnsurePinnedSportsFavorites()
+    {
+        if (_prefs.GetString("pinned_sports_seeded", "") == "1") return;
+        List<Channel> snapshot;
+        lock (_dataLock) snapshot = _channels.ToList();
+        var favNames = snapshot
+            .Where(c => _favorites.Contains(c.Id))
+            .Select(c => NormalizeName(c.Name))
+            .ToHashSet();
+        var added = 0;
+        var found = 0;
+        foreach (var tvg in PinnedPanelTvgIds)
+        {
+            var ch = snapshot.FirstOrDefault(c =>
+                string.Equals(c.TvgId, tvg, StringComparison.OrdinalIgnoreCase));
+            if (ch == null) continue;
+            found++;
+            if (_favorites.Contains(ch.Id)) continue;
+            if (!favNames.Add(NormalizeName(ch.Name))) continue;
+            _favorites.Add(ch.Id);
+            added++;
+        }
+        if (found == 0) return;
+        _prefs.PutString("pinned_sports_seeded", "1");
+        _prefs.Apply();
+        if (added > 0)
+        {
+            SaveFavorites();
+            Log.Write($"pinned sports favorites seeded: +{added} (total {_favorites.Count})");
+        }
+    }
+
+    private static string NormalizeName(string name) =>
+        string.Join(" ", name.ToLowerInvariant()
+            .Split((char[]?)null, StringSplitOptions.RemoveEmptyEntries));
+
     private void SeedDefaultFavorites()
     {
         try
@@ -818,7 +1147,7 @@ public sealed class ChannelRepository
         var result = new List<Category>
         {
             new() { Id = "fav", Name = "Favorites", ChannelCount = _favorites.Count, SortOrder = -3 },
-            new() { Id = OfficialApps.CategoryId, Name = OfficialApps.CategoryName, ChannelCount = OfficialApps.Cards.Count, SortOrder = -2 },
+            new() { Id = "recent", Name = "Recent Channels", ChannelCount = GetRecentChannels().Count, SortOrder = -2 },
             new() { Id = "india", Name = "India", ChannelCount = GetIndiaChannels().Count, SortOrder = -1 },
             new() { Id = "all", Name = "All Channels", ChannelCount = snapshot.Count, SortOrder = 0 },
             new() { Id = "football", Name = "Football", ChannelCount = GetFootballChannels().Count, SortOrder = 1 },
@@ -854,8 +1183,54 @@ public sealed class ChannelRepository
     {
         lock (_dataLock)
         {
+            RelinkFavoriteIds();
             for (var i = 0; i < _channels.Count; i++)
                 _channels[i] = _channels[i].With(isFavorite: _favorites.Contains(_channels[i].Id));
+        }
+    }
+
+    // Channel ids are "{nameHash}_{urlHash}". When a playlist is rebuilt the
+    // url hash changes (tokens, mirrors), which used to silently drop saved
+    // favorites. Re-point any orphaned favorite at the channel that still has
+    // the same name hash so the Favorites tab keeps every saved channel.
+    private void RelinkFavoriteIds()
+    {
+        if (_favorites.Count == 0 || _channels.Count == 0) return;
+        var current = new HashSet<string>(_channels.Count);
+        var byName = new Dictionary<string, List<string>>(_channels.Count);
+        foreach (var c in _channels)
+        {
+            current.Add(c.Id);
+            var sep = c.Id.IndexOf('_');
+            if (sep <= 0) continue;
+            var key = c.Id[..sep];
+            if (!byName.TryGetValue(key, out var list)) byName[key] = list = new List<string>();
+            list.Add(c.Id);
+        }
+        var used = new HashSet<string>();
+        foreach (var fav in _favorites)
+            if (current.Contains(fav)) used.Add(fav);
+        var stale = new List<string>();
+        foreach (var fav in _favorites)
+            if (!current.Contains(fav)) stale.Add(fav);
+        if (stale.Count == 0) return;
+        var add = new List<string>();
+        foreach (var fav in stale)
+        {
+            var sep = fav.IndexOf('_');
+            if (sep <= 0 || !byName.TryGetValue(fav[..sep], out var pool) || pool.Count == 0) continue;
+            // Prefer a channel not already claimed by another favorite so
+            // duplicate-named channels (mirrors/panel copies) stay distinct.
+            var target = pool.FirstOrDefault(id => !used.Contains(id)) ?? pool[0];
+            _favorites.Remove(fav);
+            add.Add(target);
+            used.Add(target);
+        }
+        foreach (var id in add) _favorites.Add(id);
+        if (add.Count > 0)
+        {
+            SaveFavorites();
+            Log.Write($"favorites relinked by name-hash: {add.Count} (total {_favorites.Count})");
         }
     }
 
@@ -977,6 +1352,7 @@ public sealed class ChannelRepository
             if (loaded.Count > 0)
             {
                 lock (_dataLock) _channels.AddRange(loaded.Select(WithOverrides));
+                EnsurePinnedSportsFavorites();
                 UpdateFavoriteStatus();
                 ApplyWatchTimes();
                 BuildCategories();

@@ -84,6 +84,11 @@ public sealed class Category
     public string Icon { get; set; } = "";
     public int ChannelCount { get; set; }
     public int SortOrder { get; set; }
+
+    // Label for the UI only: playlist groups like "Animation;Comedy" read as
+    // "Animation · Comedy". Id and Name stay untouched for data lookups.
+    public string DisplayName => string.Join(" · ",
+        Name.Split(';', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
 }
 
 public enum PlaylistType

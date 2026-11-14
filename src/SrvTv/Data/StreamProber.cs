@@ -28,7 +28,7 @@ public static class StreamProber
         var total = channels.Count;
         if (total == 0) return new List<Channel>();
         using var gate = new SemaphoreSlim(MaxParallelProbes);
-        var result = new List<Channel>();
+        var passed = new List<Channel>();
         var tested = 0;
         var gateLock = new object();
 
@@ -37,7 +37,7 @@ public static class StreamProber
             await gate.WaitAsync().ConfigureAwait(false);
             try
             {
-                return (channel, ok: await ProbeAsync(channel).ConfigureAwait(false));
+                return (channel, result: await ProbeAsync(channel).ConfigureAwait(false));
             }
             finally
             {
@@ -47,21 +47,25 @@ public static class StreamProber
 
         foreach (var t in tasks)
         {
-            var (channel, ok) = await t.ConfigureAwait(false);
+            var (channel, probe) = await t.ConfigureAwait(false);
             int done;
             lock (gateLock)
             {
                 tested++;
                 done = tested;
-                if (ok) result.Add(channel.With(isWorking: true));
+                // A timeout, refusal, 5xx, or malformed response is
+                // inconclusive. Only a definite gone response should dim a
+                // channel; slow origins must get a chance when played.
+                if (probe != ProbeResult.Dead)
+                    passed.Add(channel.With(isWorking: probe == ProbeResult.Working));
             }
             if (done % ProgressEvery == 0 || done == total)
                 onProgress?.Invoke(done, total);
         }
-        return result;
+        return passed;
     }
 
-    private static async Task<bool> ProbeAsync(Channel channel)
+    private static async Task<ProbeResult> ProbeAsync(Channel channel)
     {
         try
         {
@@ -69,11 +73,18 @@ public static class StreamProber
         }
         catch
         {
-            return false;
+            return ProbeResult.Unknown;
         }
     }
 
-    private static async Task<bool> ProbeUrlAsync(string url, StreamFormat format)
+    private enum ProbeResult
+    {
+        Working,
+        Dead,
+        Unknown,
+    }
+
+    private static async Task<ProbeResult> ProbeUrlAsync(string url, StreamFormat format)
     {
         try
         {
@@ -83,7 +94,8 @@ public static class StreamProber
             using var resp = await Http.SendAsync(req, HttpCompletionOption.ResponseHeadersRead, cts.Token)
                 .ConfigureAwait(false);
             var code = (int)resp.StatusCode;
-            if (code is < 200 or > 399) return false;
+            if (code is 401 or 403 or 404 or 410) return ProbeResult.Dead;
+            if (code is < 200 or > 399) return ProbeResult.Unknown;
 var prefix = new byte[9];
             await using var stream = await resp.Content.ReadAsStreamAsync(cts.Token).ConfigureAwait(false);
             var read = 0;
@@ -93,18 +105,20 @@ var prefix = new byte[9];
                 if (n <= 0) break;
                 read += n;
             }
-            if (read == 0) return false;
+            if (read == 0) return ProbeResult.Unknown;
             if (format == StreamFormat.HLS)
             {
                 var text = System.Text.Encoding.UTF8.GetString(prefix, 0, read)
                     .Trim('\uFEFF', ' ', '\t', '\n', '\r');
-                return text.StartsWith("#EXTM3U", StringComparison.Ordinal);
+                return text.StartsWith("#EXTM3U", StringComparison.Ordinal)
+                    ? ProbeResult.Working
+                    : ProbeResult.Unknown;
             }
-            return true;
+            return ProbeResult.Working;
         }
         catch
         {
-            return false;
+            return ProbeResult.Unknown;
         }
     }
 }

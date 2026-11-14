@@ -19,6 +19,15 @@ public partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
+        UiTest.Place(this);
+        UiTest.Attach(this, "main", (verb, arg) =>
+        {
+            if (verb == "zone") UiTest.Zone = arg;
+            if (verb == "search") OpenSearch(arg);
+            if (verb == "settings") new SettingsWindow().Show();
+            if (verb == "play" && AppState.Instance.Repo.SearchChannels(arg).FirstOrDefault() is { } ch)
+                PlayChannel(ch);
+        });
         Loaded += async (_, _) => await BootAsync();
         Activated += (_, _) => { SyncPip(); RefreshNowChips(); };
         _clock.Interval = TimeSpan.FromSeconds(30);
@@ -90,7 +99,7 @@ public partial class MainWindow : Window
 
     private void ShowToast(string message)
     {
-        Toast.Text = message;
+        ToastText.Text = message;
         Toast.Visibility = Visibility.Visible;
         _toastTimer.Stop();
         _toastTimer.Start();
@@ -127,6 +136,7 @@ public partial class MainWindow : Window
     private void FocusRailPill(int? index = null)
     {
         var target = index ?? Rail.SelectedIndex;
+        UiTest.Zone = "rail";
         Dispatcher.BeginInvoke(() =>
         {
             if (Rail.ItemContainerGenerator.ContainerFromIndex(target) is ListBoxItem it) it.Focus();
@@ -145,6 +155,7 @@ public partial class MainWindow : Window
         AppState.Instance.SelectedCategoryId = cat.Id;
         var list = repo.GetChannelsForCategory(cat.Id, cat.Name);
         Grid.ItemsSource = list;
+        UpdateEmptyState(cat, list.Count);
         Log.Write($"section: {cat.Id} ({list.Count})");
         _syncingRail = true;
         Rail.SelectedIndex = repo.Categories.FindIndex(c => c.Id == cat.Id);
@@ -152,6 +163,22 @@ public partial class MainWindow : Window
         _syncingRail = false;
         FillRailCounts();
         if (focusTop) FocusGridPosition(0);
+    }
+
+    private void UpdateEmptyState(Category cat, int count)
+    {
+        EmptyState.Visibility = count == 0 ? Visibility.Visible : Visibility.Collapsed;
+        if (count > 0) return;
+        if (cat.Id == "fav")
+        {
+            EmptyTitle.Text = "No favorites yet";
+            EmptyText.Text = "Press F on a channel, or click the star on its card, to keep it here.";
+        }
+        else
+        {
+            EmptyTitle.Text = $"Nothing in {cat.DisplayName} right now";
+            EmptyText.Text = "Pick another section with ← → or refresh the channel lists.";
+        }
     }
 
     private void FillRailCounts()
@@ -202,6 +229,7 @@ public partial class MainWindow : Window
         var items = GridChannels;
         if (items.Count == 0) return;
         position = Math.Clamp(position, 0, items.Count - 1);
+        UiTest.Zone = "grid";
         Grid.SelectedIndex = position;
         Grid.ScrollIntoView(Grid.SelectedItem);
         Dispatcher.BeginInvoke(() =>
@@ -275,6 +303,7 @@ public partial class MainWindow : Window
         var fresh = repo.GetChannelsForCategory(cat,
             repo.Categories.FirstOrDefault(c => c.Id == cat)?.Name ?? "");
         Grid.ItemsSource = fresh;
+        if (repo.Categories.FirstOrDefault(c => c.Id == cat) is { } cur) UpdateEmptyState(cur, fresh.Count);
         var at = fresh.FindIndex(c => c.Id == id);
         if (cat == "fav" && wasFav)
             FocusGridPosition(Math.Min(Math.Max(pos, 0), Math.Max(0, fresh.Count - 1)));
@@ -303,11 +332,12 @@ public partial class MainWindow : Window
         var fresh = repo.GetChannelsForCategory(cat,
             repo.Categories.FirstOrDefault(x => x.Id == cat)?.Name ?? "");
         Grid.ItemsSource = fresh;
+        if (repo.Categories.FirstOrDefault(x => x.Id == cat) is { } cur) UpdateEmptyState(cur, fresh.Count);
         var at = id != null ? fresh.FindIndex(x => x.Id == id) : -1;
         FocusGridPosition(at >= 0 ? at : Math.Min(Grid.SelectedIndex, Math.Max(0, fresh.Count - 1)));
     }
 
-private void PlaySelected()
+    private void PlaySelected()
     {
         var pos = Grid.SelectedIndex;
         var list = GridChannels;
@@ -326,6 +356,7 @@ private void PlaySelected()
         AppState.Instance.LastOpenedChannelId = ch.Id;
         AppState.Instance.ReleaseParked(); // never two streams at once
         HidePip();
+        ch = AppState.Instance.Repo.GetChannelById(ch.Id) ?? ch;
         var cat = AppState.Instance.Repo.Categories
             .FirstOrDefault(c => c.Id == AppState.Instance.SelectedCategoryId);
         new PlayerWindow(ch, cat?.Id, cat?.Name).Show();
@@ -343,8 +374,8 @@ private void PlaySelected()
         if (e.Key is Key.Up or Key.Down or Key.Left or Key.Right
             or Key.Enter or Key.Escape or Key.F) _interacted = true;
 
-        var inRail = Rail.IsKeyboardFocusWithin;
-        var inGrid = Grid.IsKeyboardFocusWithin;
+        var inRail = UiTest.FocusWithin(Rail, "rail");
+        var inGrid = UiTest.FocusWithin(Grid, "grid");
 
         if (e.Key == Key.Escape) { ShowExitOverlay(); e.Handled = true; return; }
         if (e.Key == Key.F && (Keyboard.Modifiers & ModifierKeys.Control) == ModifierKeys.Control)

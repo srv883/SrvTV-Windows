@@ -32,7 +32,27 @@ public partial class App : Application
                 "Video engine unavailable. Reinstall the Windows package or check the libvlc files."
             );
         }
+        // Dark title bars on every window so the frame matches the app.
+        EventManager.RegisterClassHandler(typeof(Window), FrameworkElement.LoadedEvent,
+            new RoutedEventHandler((sender, _) => { if (sender is Window w) UseDarkTitleBar(w); }));
         base.OnStartup(e);
+    }
+
+    [System.Runtime.InteropServices.DllImport("dwmapi.dll")]
+    private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attr, ref int value, int size);
+
+    private static void UseDarkTitleBar(Window w)
+    {
+        try
+        {
+            var hwnd = new System.Windows.Interop.WindowInteropHelper(w).Handle;
+            if (hwnd == IntPtr.Zero) return;
+            var on = 1;
+            DwmSetWindowAttribute(hwnd, 20, ref on, sizeof(int)); // DWMWA_USE_IMMERSIVE_DARK_MODE
+            var caption = 0x001D1512; // COLORREF (BGR) for #12151D, the header colour
+            DwmSetWindowAttribute(hwnd, 35, ref caption, sizeof(int)); // DWMWA_CAPTION_COLOR (Win11)
+        }
+        catch { /* older Windows: keep the default frame */ }
     }
 
     protected override void OnExit(ExitEventArgs e)

@@ -53,6 +53,8 @@ public partial class PlayerWindow : Window
         _catId = catId;
         _catName = catName;
         InitializeComponent();
+        UiTest.Place(this);
+        UiTest.Attach(this, "player");
         Loaded += (_, _) => StartPlayback();
         Closed += (_, _) => Cleanup();
         _escTimer.Tick += (_, _) =>
@@ -90,12 +92,13 @@ public partial class PlayerWindow : Window
     private void PlayChannel(Channel channel)
     {
         if (_player == null) return;
+        channel = AppState.Instance.Repo.GetChannelById(channel.Id) ?? channel;
         try { _player.Stop(); } catch { }
         try { _media?.Dispose(); } catch { }
         _media = null;
         _channel = channel;
         ChannelName.Text = channel.Name;
-        ChannelMeta.Text = $"{channel.Category} • {channel.Language}";
+        ChannelMeta.Text = $"{LabelConverter.Tidy(channel.Category)}  •  {LabelConverter.Tidy(channel.Language)}";
         UpdateEpgLine();
         TickClock();
         _clockTimer.Start();
@@ -104,6 +107,7 @@ public partial class PlayerWindow : Window
         {
             var lib = AppState.Instance.EnsureLib();
             _media = new Media(lib, channel.Url, FromType.FromLocation);
+            if (UiTest.On) _media.AddOption(":no-audio");
             _player.Play(_media);
             Log.Write("playing: " + channel.Name);
         }
@@ -227,7 +231,7 @@ public partial class PlayerWindow : Window
 
     private void ShowToast(string message)
     {
-        Toast.Text = message;
+        ToastText.Text = message;
         Toast.Visibility = Visibility.Visible;
         _toastTimer.Stop();
         _toastTimer.Start();
@@ -442,8 +446,8 @@ public partial class PlayerWindow : Window
             if (now != null) sb.Append("▶ ").Append(now);
             if (now != null && next != null) sb.AppendLine();
             if (next != null) sb.Append("Next: ").Append(next);
-            var meta = ch.Category;
-            if (ch.Language.Length > 0) meta += " • " + ch.Language;
+            var meta = LabelConverter.Tidy(ch.Category);
+            if (ch.Language.Length > 0) meta += "  •  " + LabelConverter.Tidy(ch.Language);
             rows.Add(new GuideRow
             {
                 Number = $"{Math.Max(0, ch.ChannelNumber):000}",

@@ -9,6 +9,9 @@ public partial class SettingsWindow : Window
     public SettingsWindow()
     {
         InitializeComponent();
+        if (Application.Current.MainWindow is { IsLoaded: true } main && !ReferenceEquals(main, this))
+            Owner = main;
+        UiTest.Place(this, 720, 600);
     }
 
     private async void OnRefresh(object sender, RoutedEventArgs e)

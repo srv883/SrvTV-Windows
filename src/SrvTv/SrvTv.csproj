@@ -11,6 +11,7 @@
 
   <ItemGroup>
     <PackageReference Include="LibVLCSharp.WPF" Version="3.10.2" />
+    <PackageReference Include="Microsoft.Web.WebView2" Version="1.0.4314.35" />
     <PackageReference Include="VideoLAN.LibVLC.Windows" Version="3.0.24" />
     <PackageReference Include="VirtualizingWrapPanel" Version="2.5.4" />
   </ItemGroup>
@@ -18,6 +19,12 @@
   <ItemGroup>
     <EmbeddedResource Include="Data\odia-extra.m3u">
       <LogicalName>odia-extra.m3u</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Data\mirrors.m3u">
+      <LogicalName>mirrors.m3u</LogicalName>
+    </EmbeddedResource>
+    <EmbeddedResource Include="Data\panel.m3u">
+      <LogicalName>panel.m3u</LogicalName>
     </EmbeddedResource>
   </ItemGroup>
 

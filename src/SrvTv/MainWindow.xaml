@@ -6,58 +6,88 @@
         xmlns:vlc="clr-namespace:LibVLCSharp.WPF;assembly=LibVLCSharp.WPF"
         Title="Srv TV" Height="900" Width="1500" MinHeight="600" MinWidth="900"
         Background="{StaticResource AppBackground}" WindowState="Maximized"
+        FontFamily="{StaticResource UiFont}"
+        TextOptions.TextFormattingMode="Display"
         PreviewKeyDown="OnPreviewKeyDown">
     <Grid>
         <Grid.RowDefinitions>
-            <RowDefinition Height="76"/>
-            <RowDefinition Height="100"/>
+            <RowDefinition Height="72"/>
+            <RowDefinition Height="64"/>
             <RowDefinition Height="*"/>
+            <RowDefinition Height="40"/>
         </Grid.RowDefinitions>
 
-        <!-- Header -->
-        <Border Grid.Row="0" Background="#141821" Padding="32,0">
+        <!-- ===== Header ===== -->
+        <Border Grid.Row="0" Background="{StaticResource Surface1Brush}"
+                BorderBrush="{StaticResource StrokeBrush}" BorderThickness="0,0,0,1" Padding="28,0">
             <Grid>
                 <Grid.ColumnDefinitions>
-                    <ColumnDefinition Width="Auto"/>
                     <ColumnDefinition Width="*"/>
                     <ColumnDefinition Width="Auto"/>
-                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
                 </Grid.ColumnDefinitions>
+
+                <!-- Brand -->
                 <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                    <Border Width="46" Height="46" CornerRadius="10" Background="#1C2330"
-                            BorderBrush="#5AC8FA" BorderThickness="1" Margin="0,0,16,0">
-                        <TextBlock Text="📺" FontSize="24" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                    <Border Width="40" Height="40" CornerRadius="10" Margin="0,0,14,0">
+                        <Border.Background>
+                            <LinearGradientBrush StartPoint="0,0" EndPoint="1,1">
+                                <GradientStop Color="#0A84FF" Offset="0"/>
+                                <GradientStop Color="#5AC8FA" Offset="1"/>
+                            </LinearGradientBrush>
+                        </Border.Background>
+                        <TextBlock Text="&#xE7F4;" FontFamily="{StaticResource IconFont}" FontSize="19"
+                                   Foreground="White" HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <StackPanel VerticalAlignment="Center">
                         <StackPanel Orientation="Horizontal">
-                            <TextBlock Text="Srv " Foreground="White" FontFamily="Georgia" FontSize="26"/>
-                            <TextBlock Text="TV" Foreground="#5AC8FA" FontFamily="Georgia" FontSize="26"/>
+                            <TextBlock Text="Srv " Foreground="White" FontFamily="{StaticResource BrandFont}" FontSize="22"/>
+                            <TextBlock Text="TV" Foreground="{StaticResource FocusBlueBrush}" FontFamily="{StaticResource BrandFont}" FontSize="22"/>
                         </StackPanel>
-                        <TextBlock x:Name="ChannelCount" Text="0 channels" Foreground="#9AA2B0" FontSize="13"/>
+                        <TextBlock x:Name="ChannelCount" Text="0 channels"
+                                   Foreground="{StaticResource TextSecondaryBrush}" FontSize="12"/>
                     </StackPanel>
                 </StackPanel>
-                <StackPanel Grid.Column="1" HorizontalAlignment="Center" VerticalAlignment="Center">
+
+                <!-- Clock -->
+                <StackPanel Grid.Column="1" VerticalAlignment="Center">
                     <TextBlock x:Name="ClockTime" Text="--:--" Foreground="White"
-                               FontFamily="Georgia" FontSize="26" HorizontalAlignment="Center"/>
-                    <TextBlock x:Name="ClockDate" Text="------" Foreground="#9AA2B0"
+                               FontSize="22" FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                    <TextBlock x:Name="ClockDate" Text="------" Foreground="{StaticResource TextSecondaryBrush}"
                                FontSize="12" HorizontalAlignment="Center"/>
                 </StackPanel>
-                <StackPanel Grid.Column="3" Orientation="Horizontal" VerticalAlignment="Center">
-                    <Button x:Name="BtnSearch" Content="🔍 Search" Click="OnSearch"
-                            Margin="0,0,12,0" Padding="16,10" FontSize="15"/>
-                    <Button x:Name="BtnRefresh" Content="⟳ Refresh" Click="OnRefresh"
-                            Margin="0,0,12,0" Padding="16,10" FontSize="15"/>
-                    <Button x:Name="BtnSettings" Content="⚙ Settings" Click="OnSettings"
-                            Padding="16,10" FontSize="15"/>
+
+                <!-- Actions -->
+                <StackPanel Grid.Column="2" Orientation="Horizontal" HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <Button x:Name="BtnSearch" Click="OnSearch" Style="{StaticResource Btn}"
+                            Height="42" Padding="14,0" Margin="0,0,10,0" ToolTip="Search channels (Ctrl+F)"
+                            Background="{StaticResource Surface0Brush}">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Text="&#xE721;" FontFamily="{StaticResource IconFont}" FontSize="14"
+                                       Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center"/>
+                            <TextBlock Text="Search channels" Margin="10,0,36,0" FontWeight="Normal"
+                                       Foreground="{StaticResource TextSecondaryBrush}" VerticalAlignment="Center"/>
+                            <Border Style="{StaticResource KeyCap}" Margin="0">
+                                <TextBlock Text="Ctrl F" Style="{StaticResource KeyCapText}"/>
+                            </Border>
+                        </StackPanel>
+                    </Button>
+                    <Button x:Name="BtnRefresh" Click="OnRefresh" Style="{StaticResource BtnIcon}"
+                            Content="&#xE72C;" Margin="0,0,10,0" ToolTip="Refresh channel lists"/>
+                    <Button x:Name="BtnSettings" Click="OnSettings" Style="{StaticResource BtnIcon}"
+                            Content="&#xE713;" ToolTip="Settings"/>
                 </StackPanel>
             </Grid>
         </Border>
 
-        <!-- Category rail -->
+        <!-- ===== Category rail ===== -->
         <ListBox x:Name="Rail" Grid.Row="1" Background="Transparent" BorderThickness="0"
                  ScrollViewer.HorizontalScrollBarVisibility="Hidden"
                  ScrollViewer.VerticalScrollBarVisibility="Disabled"
-                 Padding="28,10" ItemContainerStyle="{StaticResource Pill}"
+                 ScrollViewer.CanContentScroll="False"
+                 Padding="24,12,24,8" ItemContainerStyle="{StaticResource Pill}"
+                 VerticalContentAlignment="Center"
                  SelectionChanged="OnRailSelected">
             <ListBox.ItemsPanel>
                 <ItemsPanelTemplate>
@@ -67,26 +97,24 @@
             <ListBox.ItemTemplate>
                 <DataTemplate>
                     <StackPanel Orientation="Horizontal">
-                        <TextBlock Text="{Binding Name}" VerticalAlignment="Center"/>
-                        <Border Background="#3A3F4B" CornerRadius="10" Margin="10,0,0,0"
-                                Padding="8,2" VerticalAlignment="Center">
-                            <TextBlock Text="{Binding ChannelCount}" FontSize="13" Foreground="White"/>
-                        </Border>
+                        <TextBlock Text="{Binding DisplayName}" VerticalAlignment="Center"/>
+                        <TextBlock Text="{Binding ChannelCount}" FontSize="12" FontWeight="Normal"
+                                   Opacity="0.7" Margin="8,1,0,0" VerticalAlignment="Center"/>
                     </StackPanel>
                 </DataTemplate>
             </ListBox.ItemTemplate>
         </ListBox>
 
-        <!-- Channel grid -->
+        <!-- ===== Channel grid ===== -->
         <ListBox x:Name="Grid" Grid.Row="2" Background="Transparent" BorderThickness="0"
-                 Margin="22,0,22,14" SelectionMode="Single"
+                 Margin="18,4,8,0" SelectionMode="Single"
                  VirtualizingPanel.IsVirtualizing="True"
                  VirtualizingPanel.VirtualizationMode="Recycling"
                  ScrollViewer.CanContentScroll="True"
                  ScrollViewer.HorizontalScrollBarVisibility="Disabled">
             <ListBox.ItemsPanel>
                 <ItemsPanelTemplate>
-                    <vw:VirtualizingWrapPanel/>
+                    <vw:VirtualizingWrapPanel SpacingMode="BetweenItemsOnly"/>
                 </ItemsPanelTemplate>
             </ListBox.ItemsPanel>
             <ListBox.ItemContainerStyle>
@@ -97,12 +125,13 @@
                         <Setter.Value>
                             <ControlTemplate TargetType="ListBoxItem">
                                 <Border x:Name="Bd" Background="Transparent" CornerRadius="20"
-                                        Padding="{TemplateBinding Padding}" BorderThickness="3">
+                                        Padding="{TemplateBinding Padding}" BorderThickness="3"
+                                        BorderBrush="Transparent">
                                     <ContentPresenter/>
                                 </Border>
                                 <ControlTemplate.Triggers>
                                     <Trigger Property="IsSelected" Value="True">
-                                        <Setter TargetName="Bd" Property="BorderBrush" Value="#5AC8FA"/>
+                                        <Setter TargetName="Bd" Property="BorderBrush" Value="{StaticResource FocusBlueBrush}"/>
                                     </Trigger>
                                 </ControlTemplate.Triggers>
                             </ControlTemplate>
@@ -117,56 +146,94 @@
             </ListBox.ItemTemplate>
         </ListBox>
 
-        <!-- Loading overlay -->
-        <Border x:Name="Loading" Grid.RowSpan="3" Background="#99000000" Visibility="Visible"
-                HorizontalAlignment="Stretch" VerticalAlignment="Stretch">
-            <StackPanel HorizontalAlignment="Center" VerticalAlignment="Center">
-                <ProgressBar IsIndeterminate="True" Width="220" Height="10"/>
-                <TextBlock x:Name="LoadingText" Text="Loading channels..."
-                           Foreground="White" FontSize="16" Margin="0,14,0,0"
-                           HorizontalAlignment="Center"/>
-            </StackPanel>
-        </Border>
+        <!-- Empty section message -->
+        <StackPanel x:Name="EmptyState" Grid.Row="2" Visibility="Collapsed"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+            <TextBlock Text="&#xE734;" FontFamily="{StaticResource IconFont}" FontSize="40"
+                       Foreground="{StaticResource TextFaintBrush}" HorizontalAlignment="Center"/>
+            <TextBlock x:Name="EmptyTitle" Text="Nothing here yet" Foreground="White" FontSize="20"
+                       FontWeight="SemiBold" Margin="0,14,0,6" HorizontalAlignment="Center"/>
+            <TextBlock x:Name="EmptyText" Text="Star a channel with F or the ★ on its card to add it to Favorites."
+                       Foreground="{StaticResource TextSecondaryBrush}" FontSize="14" HorizontalAlignment="Center"/>
+        </StackPanel>
 
-        <!-- Mini PiP (top-right corner) -->
-        <Border x:Name="PipFrame" Width="240" Height="135" Visibility="Collapsed"
-                HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,16,16,0"
-                CornerRadius="10" BorderBrush="#5AC8FA" BorderThickness="1" Background="Black"
-                MouseLeftButtonUp="OnPipResume" Cursor="Hand">
+        <!-- ===== Bottom bar: toast + key hints ===== -->
+        <Border Grid.Row="3" Background="{StaticResource Surface1Brush}"
+                BorderBrush="{StaticResource StrokeBrush}" BorderThickness="0,1,0,0" Padding="28,0">
             <Grid>
-                <vlc:VideoView x:Name="MiniView" IsHitTestVisible="False"/>
-                <Button Content="✕" Width="30" Height="30" FontSize="13" Padding="0"
-                        HorizontalAlignment="Right" VerticalAlignment="Top" Margin="0,4,4,0"
-                        Click="OnPipClose"/>
+                <Border x:Name="Toast" Visibility="Collapsed" HorizontalAlignment="Left"
+                        VerticalAlignment="Center" Background="{StaticResource Surface3Brush}"
+                        CornerRadius="8" Padding="12,4">
+                    <TextBlock x:Name="ToastText" Foreground="White" FontSize="13"/>
+                </Border>
+                <StackPanel x:Name="Hints" Orientation="Horizontal" HorizontalAlignment="Right"
+                            VerticalAlignment="Center">
+                    <Border Style="{StaticResource KeyCap}"><TextBlock Text="Enter" Style="{StaticResource KeyCapText}"/></Border>
+                    <TextBlock Text="Watch" Style="{StaticResource HintText}"/>
+                    <Border Style="{StaticResource KeyCap}"><TextBlock Text="F" Style="{StaticResource KeyCapText}"/></Border>
+                    <TextBlock Text="Favorite" Style="{StaticResource HintText}"/>
+                    <Border Style="{StaticResource KeyCap}"><TextBlock Text="← →" Style="{StaticResource KeyCapText}"/></Border>
+                    <TextBlock Text="Move / next section" Style="{StaticResource HintText}"/>
+                    <Border Style="{StaticResource KeyCap}"><TextBlock Text="PgUp PgDn" Style="{StaticResource KeyCapText}"/></Border>
+                    <TextBlock Text="Page" Style="{StaticResource HintText}"/>
+                    <Border Style="{StaticResource KeyCap}"><TextBlock Text="Ctrl F" Style="{StaticResource KeyCapText}"/></Border>
+                    <TextBlock Text="Search" Style="{StaticResource HintText}"/>
+                    <Border Style="{StaticResource KeyCap}"><TextBlock Text="Esc" Style="{StaticResource KeyCapText}"/></Border>
+                    <TextBlock Text="Exit" Style="{StaticResource HintText}" Margin="0"/>
+                </StackPanel>
             </Grid>
         </Border>
 
-        <!-- Toast -->
-        <TextBlock x:Name="Toast" Grid.Row="2" Foreground="White" FontSize="14"
-                   HorizontalAlignment="Left" VerticalAlignment="Bottom" Margin="30,0,0,24"
-                   Background="#CC141A24" Padding="14,8" Visibility="Collapsed"/>
+        <!-- ===== Loading overlay ===== -->
+        <Grid x:Name="Loading" Grid.RowSpan="4" Background="#B3060709" Visibility="Visible">
+            <Border Background="{StaticResource Surface1Brush}" BorderBrush="{StaticResource StrokeBrush}"
+                    BorderThickness="1" CornerRadius="16" Padding="36,28"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
+                <StackPanel Width="260">
+                    <TextBlock x:Name="LoadingText" Text="Loading channels..."
+                               Foreground="White" FontSize="15" FontWeight="SemiBold"
+                               HorizontalAlignment="Center" Margin="0,0,0,16" TextWrapping="Wrap"
+                               TextAlignment="Center"/>
+                    <ProgressBar IsIndeterminate="True"/>
+                </StackPanel>
+            </Border>
+        </Grid>
 
-        <!-- Key hints -->
-        <TextBlock Grid.Row="2" Foreground="#5A6577" FontSize="12"
-                   HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,30,24"
-                   Text="Click to watch • ⭐ favorite • Ctrl+F search • Arrows/PgUp/PgDn move • Enter play • Esc exit"/>
+        <!-- ===== Mini PiP (top-right corner) ===== -->
+        <Border x:Name="PipFrame" Grid.RowSpan="3" Width="288" Height="162" Visibility="Collapsed"
+                HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,28,16"
+                CornerRadius="12" BorderBrush="{StaticResource FocusBlueBrush}" BorderThickness="2"
+                Background="Black" MouseLeftButtonUp="OnPipResume" Cursor="Hand"
+                ToolTip="Click to go back to full screen">
+            <Border.Effect>
+                <DropShadowEffect BlurRadius="20" ShadowDepth="4" Opacity="0.6" Color="Black"/>
+            </Border.Effect>
+            <Grid>
+                <vlc:VideoView x:Name="MiniView" IsHitTestVisible="False"/>
+                <Button Content="&#xE711;" Style="{StaticResource BtnIcon}" Width="30" Height="30"
+                        FontSize="11" Background="#CC12151D" HorizontalAlignment="Right"
+                        VerticalAlignment="Top" Margin="0,6,6,0" Click="OnPipClose"
+                        ToolTip="Stop and close"/>
+            </Grid>
+        </Border>
 
-        <!-- Exit overlay -->
-        <Grid x:Name="ExitOverlay" Grid.RowSpan="3" Background="#B3000000" Visibility="Collapsed">
-            <Border Background="#F2161C2B" CornerRadius="20" BorderBrush="#40FFFFFF"
-                    BorderThickness="1" Padding="48,32" HorizontalAlignment="Center"
-                    VerticalAlignment="Center">
+        <!-- ===== Exit overlay ===== -->
+        <Grid x:Name="ExitOverlay" Grid.RowSpan="4" Background="#CC000000" Visibility="Collapsed">
+            <Border Background="{StaticResource Surface1Brush}" CornerRadius="18"
+                    BorderBrush="{StaticResource StrokeBrush}" BorderThickness="1" Padding="40,30"
+                    HorizontalAlignment="Center" VerticalAlignment="Center">
                 <StackPanel HorizontalAlignment="Center">
-                    <TextBlock Text="Exit Srv TV?" Foreground="White" FontSize="24"
-                               FontWeight="Bold" HorizontalAlignment="Center"/>
-                    <TextBlock Text="Do you want to exit the app?" Foreground="#9AA2B0"
-                               FontSize="16" Margin="0,10,0,28" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Exit Srv TV?" Foreground="White" FontSize="22"
+                               FontWeight="SemiBold" HorizontalAlignment="Center"/>
+                    <TextBlock Text="Anything playing in the mini player will stop."
+                               Foreground="{StaticResource TextSecondaryBrush}"
+                               FontSize="14" Margin="0,8,0,24" HorizontalAlignment="Center"/>
                     <StackPanel Orientation="Horizontal" HorizontalAlignment="Center">
-                        <Button x:Name="BtnExitNo" Content="No" Width="150" Height="56"
-                                FontSize="18" FontWeight="Bold" Margin="0,0,16,0"
+                        <Button x:Name="BtnExitNo" Content="Stay" Width="140" Height="46"
+                                Style="{StaticResource Btn}" FontSize="15" Margin="0,0,12,0"
                                 Click="OnExitNo"/>
-                        <Button x:Name="BtnExitYes" Content="Yes" Width="150" Height="56"
-                                FontSize="18" FontWeight="Bold" Click="OnExitYes"/>
+                        <Button x:Name="BtnExitYes" Content="Exit" Width="140" Height="46"
+                                Style="{StaticResource BtnPrimary}" FontSize="15" Click="OnExitYes"/>
                     </StackPanel>
                 </StackPanel>
             </Border>

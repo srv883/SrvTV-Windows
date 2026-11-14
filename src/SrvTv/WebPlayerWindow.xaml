@@ -1,0 +1,25 @@
+<Window x:Class="SrvTv.WebPlayerWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        xmlns:wv2="clr-namespace:Microsoft.Web.WebView2.Wpf;assembly=Microsoft.Web.WebView2.Wpf"
+        Title="Srv TV Web Player" Background="Black" WindowState="Maximized"
+        WindowStyle="None" PreviewKeyDown="OnPreviewKeyDown">
+    <Grid Background="Black">
+        <wv2:WebView2 x:Name="WebView" />
+        <Border x:Name="InfoBar" HorizontalAlignment="Stretch" VerticalAlignment="Top"
+                Background="#A6000000" Padding="18,12" Visibility="Visible">
+            <Grid>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
+                <TextBlock x:Name="TitleText" Text="" Foreground="White" FontSize="20" FontWeight="Bold"/>
+                <TextBlock Grid.Column="1" Text="Esc: back to Srv TV" Foreground="#B0FFFFFF" FontSize="13" VerticalAlignment="Center"/>
+            </Grid>
+        </Border>
+        <Border x:Name="StatusPanel" HorizontalAlignment="Center" VerticalAlignment="Center"
+                Background="#CC141A26" CornerRadius="16" Padding="24,16" Visibility="Collapsed">
+            <TextBlock x:Name="StatusText" Text="" Foreground="White" FontSize="16" TextWrapping="Wrap" MaxWidth="720"/>
+        </Border>
+    </Grid>
+</Window>

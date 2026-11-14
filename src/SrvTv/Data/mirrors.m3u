@@ -1,0 +1,9 @@
+#EXTM3U
+#EXTINF:-1 tvg-id="NationalGeographicWild.hu" group-title="Documentary",National Geographic Wild (Hungary)
+http://88.212.7.14/live/ngw_hun/index.m3u8
+#EXTINF:-1 tvg-id="NationalGeographicWild.cz" group-title="Documentary",National Geographic Wild (Czech Republic)
+http://88.212.15.50/live/test_ngw/playlist.m3u8
+#EXTINF:-1 tvg-id="StarSportsSelect2.in@HD" tvg-logo="https://i.imgur.com/FtRT73R.png" group-title="Sports",Star Sports Select 2 HD (720p)
+http://tvsen7.aynascope.net/ssport2hd/index.m3u8
+#EXTINF:-1 tvg-id="StarSports2Telugu.in@HD" tvg-logo="https://i.imgur.com/m7DvvqF.png" group-title="Sports",Star Sports 2 Telugu HD (576p)
+https://real-vk.proxy.nellaiiptv.com/SDMEDIA/index.m3u8

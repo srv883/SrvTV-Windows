@@ -32,7 +32,15 @@ public sealed class PrefsStore
         var dir = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "SrvTv");
         Directory.CreateDirectory(dir);
-        return new PrefsStore(Path.Combine(dir, "prefs.json"));
+        var path = Path.Combine(dir, "prefs.json");
+        if (UiTest.On)
+        {
+            // UI test copies work on a throwaway copy, never the real prefs.
+            var copy = Path.Combine(Path.GetTempPath(), "srvtv-uitest-prefs.json");
+            if (File.Exists(path)) File.Copy(path, copy, overwrite: true);
+            return new PrefsStore(copy);
+        }
+        return new PrefsStore(path);
     }
 
     public string GetString(string key, string def = "")
