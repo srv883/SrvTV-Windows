@@ -9,7 +9,7 @@
         FontFamily="{StaticResource UiFont}"
         TextOptions.TextFormattingMode="Display"
         PreviewKeyDown="OnPreviewKeyDown">
-    <Grid>
+    <Grid x:Name="Root">
         <Grid.RowDefinitions>
             <RowDefinition Height="72"/>
             <RowDefinition Height="64"/>
@@ -199,21 +199,55 @@
             </Border>
         </Grid>
 
-        <!-- ===== Mini PiP (top-right corner) ===== -->
-        <Border x:Name="PipFrame" Grid.RowSpan="3" Width="288" Height="162" Visibility="Collapsed"
-                HorizontalAlignment="Right" VerticalAlignment="Bottom" Margin="0,0,28,16"
-                CornerRadius="12" BorderBrush="{StaticResource FocusBlueBrush}" BorderThickness="2"
-                Background="Black" MouseLeftButtonUp="OnPipResume" Cursor="Hand"
-                ToolTip="Click to go back to full screen">
+        <!-- ===== Mini player: drag it anywhere by its bar or the video ===== -->
+        <Border x:Name="PipFrame" Grid.RowSpan="4" Width="320" Visibility="Collapsed"
+                HorizontalAlignment="Left" VerticalAlignment="Top"
+                CornerRadius="12" BorderBrush="{StaticResource FocusBlueBrush}" BorderThickness="1.5"
+                Background="{StaticResource Surface1Brush}" SnapsToDevicePixels="True">
             <Border.Effect>
-                <DropShadowEffect BlurRadius="20" ShadowDepth="4" Opacity="0.6" Color="Black"/>
+                <DropShadowEffect BlurRadius="24" ShadowDepth="4" Opacity="0.7" Color="Black"/>
             </Border.Effect>
             <Grid>
-                <vlc:VideoView x:Name="MiniView" IsHitTestVisible="False"/>
-                <Button Content="&#xE711;" Style="{StaticResource BtnIcon}" Width="30" Height="30"
-                        FontSize="11" Background="#CC12151D" HorizontalAlignment="Right"
-                        VerticalAlignment="Top" Margin="0,6,6,0" Click="OnPipClose"
-                        ToolTip="Stop and close"/>
+                <Grid.RowDefinitions>
+                    <RowDefinition Height="34"/>
+                    <RowDefinition Height="Auto"/>
+                </Grid.RowDefinitions>
+                <!-- Title bar (drag handle) -->
+                <Grid x:Name="PipBar" Background="Transparent" Cursor="SizeAll"
+                      MouseLeftButtonDown="OnPipDragStart" MouseMove="OnPipDragMove"
+                      MouseLeftButtonUp="OnPipDragEnd" ToolTip="Drag to move">
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,4,0">
+                        <Ellipse Width="7" Height="7" Fill="#FF3B30" Margin="0,1,8,0"/>
+                        <TextBlock x:Name="PipTitle" Text="" Foreground="White" FontSize="12"
+                                   FontWeight="SemiBold" TextTrimming="CharacterEllipsis" MaxWidth="170"/>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,4,0">
+                        <Button Style="{StaticResource BtnGhost}" Width="28" Height="26" Padding="0" Focusable="False"
+                                FontFamily="{StaticResource IconFont}" FontSize="11" Content="&#xE740;"
+                                Click="OnPipSize" ToolTip="Bigger / smaller" Cursor="Hand"/>
+                        <Button Style="{StaticResource BtnGhost}" Width="28" Height="26" Padding="0" Focusable="False"
+                                FontFamily="{StaticResource IconFont}" FontSize="11" Content="&#xE8A7;"
+                                Click="OnPipExpand" ToolTip="Back to full player" Cursor="Hand"/>
+                        <Button Style="{StaticResource BtnGhost}" Width="28" Height="26" Padding="0" Focusable="False"
+                                FontFamily="{StaticResource IconFont}" FontSize="11" Content="&#xE711;"
+                                Click="OnPipClose" ToolTip="Stop and close" Cursor="Hand"/>
+                    </StackPanel>
+                </Grid>
+                <!-- Video. Its Content sits on the video's own overlay window,
+                     so it is the only place that can take clicks over the picture. -->
+                <Border Grid.Row="1" x:Name="PipVideoBox" Height="180" CornerRadius="0,0,11,11"
+                        Background="Black" ClipToBounds="True">
+                    <vlc:VideoView x:Name="MiniView">
+                        <Grid Background="#01000000" Cursor="Hand"
+                              MouseLeftButtonDown="OnPipDragStart" MouseMove="OnPipDragMove"
+                              MouseLeftButtonUp="OnPipDragEnd"
+                              ToolTip="Click: full player · Drag: move"/>
+                    </vlc:VideoView>
+                </Border>
             </Grid>
         </Border>
 

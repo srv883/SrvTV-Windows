@@ -56,14 +56,21 @@ public partial class PlayerWindow : Window
         UiTest.Place(this);
         UiTest.Attach(this, "player");
         Loaded += (_, _) => StartPlayback();
-        Closed += (_, _) => Cleanup();
+        Closed += (_, _) =>
+        {
+            Cleanup();
+            // Show the mini player right away, even if the home window isn't re-activated.
+            if (_parked) Application.Current.Windows.OfType<MainWindow>().FirstOrDefault()?.SyncPip();
+        };
         _escTimer.Tick += (_, _) =>
         {
             _escTimer.Stop();
             _escHoldFired = true;
             ShowExitOverlay();
         };
-        _hideTimer.Tick += (_, _) => { InfoBar.Visibility = Visibility.Collapsed; Hint.Visibility = Visibility.Collapsed; _hideTimer.Stop(); };
+        _hideTimer.Tick += (_, _) => HideOsd();
+        _windowed = AppState.Instance.Prefs.GetInt("player_windowed") == 1;
+        SourceInitialized += (_, _) => ApplyWindowMode(save: false);
         _clockTimer.Tick += (_, _) => TickClock();
         _toastTimer.Tick += (_, _) => { Toast.Visibility = Visibility.Collapsed; _toastTimer.Stop(); };
         _recoveryTimer.Tick += (_, _) => RecoverPlayback();
@@ -225,8 +232,19 @@ public partial class PlayerWindow : Window
     {
         InfoBar.Visibility = Visibility.Visible;
         Hint.Visibility = Visibility.Visible;
+        Overlay.Cursor = null;
         _hideTimer.Stop();
         _hideTimer.Start();
+    }
+
+    private void HideOsd()
+    {
+        _hideTimer.Stop();
+        // Keep the bar up while the pointer is on it (its buttons are in use).
+        if (InfoBar.IsMouseOver) { _hideTimer.Start(); return; }
+        InfoBar.Visibility = Visibility.Collapsed;
+        Hint.Visibility = Visibility.Collapsed;
+        if (!_guideOpen && !_exitOpen) Overlay.Cursor = Cursors.None; // hide the pointer over video
     }
 
     private void ShowToast(string message)
@@ -242,7 +260,23 @@ public partial class PlayerWindow : Window
         ShowOsd();
         if (_exitOpen)
         {
-            if (e.Key == Key.Escape) { HideExitOverlay(); e.Handled = true; }
+            switch (e.Key)
+            {
+                case Key.Escape: HideExitOverlay(); break;
+                case Key.Left: case Key.Right: case Key.Tab: case Key.Up: case Key.Down:
+                    SelectExitChoice(!_exitYes); break;
+                case Key.Enter: case Key.Space:
+                    if (_exitYes) OnExitYes(this, new RoutedEventArgs()); else HideExitOverlay();
+                    break;
+                default: return;
+            }
+            e.Handled = true;
+            return;
+        }
+        if (e.Key == Key.F11 || (e.Key == Key.W && !_guideOpen))
+        {
+            ToggleWindowMode();
+            e.Handled = true;
             return;
         }
         if (_guideOpen)
@@ -301,9 +335,12 @@ public partial class PlayerWindow : Window
                         }
                     }
                     return; // same-row: let nothing happen (guide stays open)
-                case Key.Up:
-                case Key.Down:
-                    return; // rows navigate natively
+                case Key.Up: StepGuide(-1); e.Handled = true; return;
+                case Key.Down: StepGuide(1); e.Handled = true; return;
+                case Key.PageUp: StepGuide(-8); e.Handled = true; return;
+                case Key.PageDown: StepGuide(8); e.Handled = true; return;
+                case Key.Home: StepGuide(-100000); e.Handled = true; return;
+                case Key.End: StepGuide(100000); e.Handled = true; return;
                 default:
                     return; // ignore everything else behind the guide
             }
@@ -460,7 +497,7 @@ public partial class PlayerWindow : Window
             });
         }
         GuideList.ItemsSource = rows;
-        GuideHeader.Text = (_catName ?? "All Channels").ToUpperInvariant();
+        GuideHeader.Text = LabelConverter.Tidy(_catName ?? "All Channels");
         var at = channels.FindIndex(c => c.Id == _channel.Id);
         GuideList.SelectedIndex = Math.Max(0, at);
         GuideList.ScrollIntoView(GuideList.SelectedItem);
@@ -500,6 +537,14 @@ public partial class PlayerWindow : Window
         ShowToast(sections[target].Name);
     }
 
+    private void StepGuide(int delta)
+    {
+        var count = GuideList.Items.Count;
+        if (count == 0) return;
+        GuideList.SelectedIndex = Math.Clamp(GuideList.SelectedIndex + delta, 0, count - 1);
+        GuideList.ScrollIntoView(GuideList.SelectedItem);
+    }
+
     private void OnGuideDoubleClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
         var wid = FocusedGuideId();
@@ -517,17 +562,121 @@ public partial class PlayerWindow : Window
         PlayChannel(channels[at]);
     }
 
-    private void OnVideoClick(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    // ----- mouse over the picture, toolbar buttons -----
+
+    private Point _lastMouse;
+
+    private void OnOverlayMouseDown(object sender, MouseButtonEventArgs e)
     {
-        if (_guideOpen) return;
-        ShowOsd(); // click anywhere on video re-reveals the info bar
+        if (e.ClickCount == 2 && !_guideOpen && !_exitOpen && ReferenceEquals(e.OriginalSource, Overlay))
+        {
+            ToggleWindowMode();
+            e.Handled = true;
+            return;
+        }
+        if (!_guideOpen) ShowOsd(); // a click on the picture re-reveals the info bar
+        ReclaimKeyboard();
     }
+
+    private void OnOverlayMouseMove(object sender, MouseEventArgs e)
+    {
+        var p = e.GetPosition(Overlay);
+        if (Math.Abs(p.X - _lastMouse.X) + Math.Abs(p.Y - _lastMouse.Y) < 3) return;
+        _lastMouse = p;
+        if (!_guideOpen) ShowOsd();
+    }
+
+    // Clicking the overlay activates the overlay window; hand activation
+    // back so the remote-style keys keep reaching this window.
+    private void ReclaimKeyboard()
+    {
+        if (UiTest.On) return;
+        Dispatcher.BeginInvoke(DispatcherPriority.Background, new Action(() => { if (!_closing) Activate(); }));
+    }
+
+    private void OnBtnGuide(object sender, RoutedEventArgs e) { OpenGuide(); ReclaimKeyboard(); }
+    private void OnBtnMini(object sender, RoutedEventArgs e) => ParkAndClose();
+    private void OnBtnWindowMode(object sender, RoutedEventArgs e) { ToggleWindowMode(); ReclaimKeyboard(); }
+    private void OnBtnClose(object sender, RoutedEventArgs e) => Close();
+
+    // ----- full screen / window -----
+
+    private bool _windowed;
+
+    private void ToggleWindowMode()
+    {
+        _windowed = !_windowed;
+        ApplyWindowMode(save: true);
+        ShowOsd();
+    }
+
+    private void ApplyWindowMode(bool save)
+    {
+        var prefs = AppState.Instance.Prefs;
+        if (_windowed)
+        {
+            WindowState = WindowState.Normal;
+            WindowStyle = WindowStyle.SingleBorderWindow;
+            ResizeMode = ResizeMode.CanResize;
+            var area = SystemParameters.WorkArea;
+            double w = prefs.GetInt("player_win_w"), h = prefs.GetInt("player_win_h");
+            double l = prefs.GetInt("player_win_l", int.MinValue), t = prefs.GetInt("player_win_t", int.MinValue);
+            if (w < 480 || h < 270) { w = Math.Min(1280, area.Width * 0.7); h = Math.Round(w * 9 / 16); }
+            w = Math.Min(w, area.Width);
+            h = Math.Min(h, area.Height);
+            var onScreen = l > SystemParameters.VirtualScreenLeft - w / 2
+                           && l < SystemParameters.VirtualScreenLeft + SystemParameters.VirtualScreenWidth - 80
+                           && t >= SystemParameters.VirtualScreenTop - 10
+                           && t < SystemParameters.VirtualScreenTop + SystemParameters.VirtualScreenHeight - 80;
+            if (!onScreen) { l = area.Left + (area.Width - w) / 2; t = area.Top + (area.Height - h) / 2; }
+            Width = w; Height = h;
+            if (UiTest.On) { Left = -20000; Top = 0; } else { Left = l; Top = t; }
+            MinWidth = 480; MinHeight = 300;
+            BtnWindowMode.Content = "\uE740";
+            BtnWindowMode.ToolTip = "Full screen (F11 or double-click)";
+        }
+        else
+        {
+            if (save) SaveWindowBounds(force: true);
+            WindowStyle = WindowStyle.None;
+            ResizeMode = ResizeMode.NoResize;
+            WindowState = WindowState.Normal; // re-maximize so the frameless window covers the taskbar
+            if (!UiTest.On) WindowState = WindowState.Maximized;
+            BtnWindowMode.Content = "\uE73F";
+            BtnWindowMode.ToolTip = "Play in a window (F11 or double-click)";
+        }
+        if (save) { prefs.PutInt("player_windowed", _windowed ? 1 : 0); prefs.Apply(); }
+    }
+
+    private void SaveWindowBounds(bool force = false)
+    {
+        if (UiTest.On || WindowState != WindowState.Normal || (!_windowed && !force)) return;
+        if (WindowStyle == WindowStyle.None) return; // full screen bounds are not a window size
+        var prefs = AppState.Instance.Prefs;
+        prefs.PutInt("player_win_l", (int)Left);
+        prefs.PutInt("player_win_t", (int)Top);
+        prefs.PutInt("player_win_w", (int)Width);
+        prefs.PutInt("player_win_h", (int)Height);
+        prefs.Apply();
+    }
+
+    private bool _exitYes;
 
     private void ShowExitOverlay()
     {
         _exitOpen = true;
         ExitOverlay.Visibility = Visibility.Visible;
-        BtnExitNo.Focus();
+        Overlay.Cursor = null;
+        SelectExitChoice(false);
+    }
+
+    // The dialog lives on the video overlay window, which never holds
+    // keyboard focus, so the highlighted choice is tracked here.
+    private void SelectExitChoice(bool yes)
+    {
+        _exitYes = yes;
+        BtnExitYes.Style = (Style)FindResource(yes ? "BtnPrimary" : "Btn");
+        BtnExitNo.Style = (Style)FindResource(yes ? "Btn" : "BtnPrimary");
     }
 
     private void HideExitOverlay()
@@ -546,6 +695,7 @@ public partial class PlayerWindow : Window
 
     private void Cleanup()
     {
+        SaveWindowBounds();
         _closing = true;
         _escTimer.Stop();
         _hideTimer.Stop();

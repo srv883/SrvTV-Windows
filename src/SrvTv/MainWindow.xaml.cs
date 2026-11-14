@@ -29,6 +29,10 @@ public partial class MainWindow : Window
                 PlayChannel(ch);
         });
         Loaded += async (_, _) => await BootAsync();
+        SizeChanged += (_, _) =>
+        {
+            if (PipFrame.Visibility == Visibility.Visible) PlacePip();
+        };
         Activated += (_, _) => { SyncPip(); RefreshNowChips(); };
         _clock.Interval = TimeSpan.FromSeconds(30);
         _clock.Tick += (_, _) => UpdateClock();
@@ -508,13 +512,15 @@ public partial class MainWindow : Window
         return null;
     }
 
-    private void SyncPip()
+    internal void SyncPip()
     {
         var p = AppState.Instance.ParkedPlayer;
         if (p == null) { HidePip(); return; }
         // The VideoView needs a real HWND before a player can render into
         // it: attach on the Loaded pass (after this frame is laid out).
+        PipTitle.Text = AppState.Instance.ParkedChannel?.Name ?? "";
         PipFrame.Visibility = Visibility.Visible;
+        PlacePip();
         AttachParked();
     }
 
@@ -556,9 +562,94 @@ public partial class MainWindow : Window
         HidePip();
     }
 
-    // Click the mini player: resume fullscreen on the same channel
-    // (fresh pipeline; the parked player is released first).
-    private void OnPipResume(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    // ----- mini player position, size and dragging -----
+
+    private static readonly double[] PipWidths = { 320, 440, 560 };
+    private static int _pipSizeIdx;
+    private static Point? _pipPos; // top-left inside the window; null = default corner
+    private Point _dragStart;
+    private Point _dragOrigin;
+    private bool _dragging;
+    private bool _dragMoved;
+
+    private void PlacePip()
+    {
+        var w = PipWidths[_pipSizeIdx];
+        PipFrame.Width = w;
+        PipVideoBox.Height = Math.Round(w * 9 / 16);
+        var h = PipVideoBox.Height + 34 + 3;
+        var pos = _pipPos ?? new Point(Root.ActualWidth - w - 28, Root.ActualHeight - h - 56);
+        MovePip(pos);
+    }
+
+    private void MovePip(Point pos)
+    {
+        var w = PipFrame.Width;
+        var h = PipVideoBox.Height + 37;
+        var maxX = Math.Max(0, Root.ActualWidth - w - 8);
+        var maxY = Math.Max(0, Root.ActualHeight - h - 8);
+        var x = Math.Clamp(pos.X, 8, Math.Max(8, maxX));
+        var y = Math.Clamp(pos.Y, 8, Math.Max(8, maxY));
+        PipFrame.Margin = new Thickness(x, y, 0, 0);
+    }
+
+    private void OnPipDragStart(object sender, MouseButtonEventArgs e)
+    {
+        if (sender is not IInputElement el) return;
+        _dragging = true;
+        _dragMoved = false;
+        _dragStart = e.GetPosition(Root);
+        _dragOrigin = new Point(PipFrame.Margin.Left, PipFrame.Margin.Top);
+        el.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void OnPipDragMove(object sender, MouseEventArgs e)
+    {
+        if (!_dragging) return;
+        var now = e.GetPosition(Root);
+        var dx = now.X - _dragStart.X;
+        var dy = now.Y - _dragStart.Y;
+        if (!_dragMoved && Math.Abs(dx) < 4 && Math.Abs(dy) < 4) return;
+        _dragMoved = true;
+        MovePip(new Point(_dragOrigin.X + dx, _dragOrigin.Y + dy));
+    }
+
+    private void OnPipDragEnd(object sender, MouseButtonEventArgs e)
+    {
+        if (!_dragging) return;
+        _dragging = false;
+        (sender as IInputElement)?.ReleaseMouseCapture();
+        e.Handled = true;
+        if (_dragMoved)
+        {
+            _pipPos = new Point(PipFrame.Margin.Left, PipFrame.Margin.Top);
+            Activate(); // a click on the video overlay can take activation; give it back
+        }
+        else if (ReferenceEquals(sender, PipBar)) Activate();
+        else ResumeFromPip(); // plain click on the picture = back to the full player
+    }
+
+    private void OnPipSize(object sender, RoutedEventArgs e)
+    {
+        // Keep the bottom-right corner where it is while the size changes.
+        var oldW = PipFrame.Width;
+        var oldH = PipVideoBox.Height + 37;
+        var right = PipFrame.Margin.Left + oldW;
+        var bottom = PipFrame.Margin.Top + oldH;
+        _pipSizeIdx = (_pipSizeIdx + 1) % PipWidths.Length;
+        var w = PipWidths[_pipSizeIdx];
+        PipFrame.Width = w;
+        PipVideoBox.Height = Math.Round(w * 9 / 16);
+        MovePip(new Point(right - w, bottom - (PipVideoBox.Height + 37)));
+        _pipPos = new Point(PipFrame.Margin.Left, PipFrame.Margin.Top);
+    }
+
+    private void OnPipExpand(object sender, RoutedEventArgs e) => ResumeFromPip();
+
+    // Back to the full player on the same channel (fresh pipeline; the
+    // parked player is released first).
+    private void ResumeFromPip()
     {
         var ch = AppState.Instance.ParkedChannel;
         if (ch == null) return;

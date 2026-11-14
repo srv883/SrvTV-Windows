@@ -6,11 +6,17 @@
         Title="Srv TV Player" Background="Black" WindowState="Maximized"
         WindowStyle="None" FontFamily="{StaticResource UiFont}" PreviewKeyDown="OnPreviewKeyDown" PreviewKeyUp="OnPreviewKeyUp">
     <Grid Background="Black">
-        <vlc:VideoView x:Name="Video" MouseLeftButtonUp="OnVideoClick"/>
+        <!-- Everything drawn over the picture must live in the VideoView's
+             Content: it is shown on the video's own overlay window. Plain
+             siblings would sit underneath the native video surface. -->
+        <vlc:VideoView x:Name="Video">
+        <Grid x:Name="Overlay" Background="#01000000"
+              MouseLeftButtonDown="OnOverlayMouseDown" MouseMove="OnOverlayMouseMove"
+              PreviewKeyDown="OnPreviewKeyDown" PreviewKeyUp="OnPreviewKeyUp">
 
         <!-- Top info bar -->
         <Border x:Name="InfoBar" HorizontalAlignment="Stretch" VerticalAlignment="Top"
-                Padding="40,26,40,56" Visibility="Visible" IsHitTestVisible="False">
+                Padding="40,26,32,56" Visibility="Visible">
             <Border.Background>
                 <LinearGradientBrush StartPoint="0,0" EndPoint="0,1">
                     <GradientStop Color="#E6000000" Offset="0"/>
@@ -37,8 +43,22 @@
                     <TextBlock x:Name="EpgNowNext" Text="" Foreground="#FFE57F" FontSize="14"
                                Margin="0,4,0,0" TextWrapping="Wrap" MaxWidth="900" HorizontalAlignment="Left"/>
                 </StackPanel>
-                <TextBlock x:Name="Clock" Grid.Column="1" Text="" Foreground="White"
-                           FontSize="22" FontWeight="SemiBold" VerticalAlignment="Top" Margin="0,4,0,0"/>
+                <StackPanel Grid.Column="1" Orientation="Horizontal" VerticalAlignment="Top">
+                    <TextBlock x:Name="Clock" Text="" Foreground="White" FontSize="22" FontWeight="SemiBold"
+                               VerticalAlignment="Center" Margin="0,0,20,0"/>
+                    <Button Style="{StaticResource BtnIcon}" Background="#B31A1F2B" BorderBrush="#33FFFFFF"
+                            Content="&#xE8FD;" Focusable="False" Margin="0,0,8,0" Click="OnBtnGuide"
+                            ToolTip="Channel guide (G)"/>
+                    <Button Style="{StaticResource BtnIcon}" Background="#B31A1F2B" BorderBrush="#33FFFFFF"
+                            Content="&#xE944;" Focusable="False" Margin="0,0,8,0" Click="OnBtnMini"
+                            ToolTip="Mini player (Esc)"/>
+                    <Button x:Name="BtnWindowMode" Style="{StaticResource BtnIcon}" Background="#B31A1F2B"
+                            BorderBrush="#33FFFFFF" Content="&#xE73F;" Focusable="False" Margin="0,0,8,0"
+                            Click="OnBtnWindowMode" ToolTip="Play in a window (F11 or double-click)"/>
+                    <Button Style="{StaticResource BtnIcon}" Background="#B31A1F2B" BorderBrush="#33FFFFFF"
+                            Content="&#xE711;" Focusable="False" Click="OnBtnClose"
+                            ToolTip="Stop and go back"/>
+                </StackPanel>
             </Grid>
         </Border>
 
@@ -55,6 +75,8 @@
                 <TextBlock Text="Favorite" Style="{StaticResource HintText}"/>
                 <Border Style="{StaticResource KeyCap}"><TextBlock Text="A" Style="{StaticResource KeyCapText}"/></Border>
                 <TextBlock Text="Aspect" Style="{StaticResource HintText}"/>
+                <Border Style="{StaticResource KeyCap}"><TextBlock Text="F11" Style="{StaticResource KeyCapText}"/></Border>
+                <TextBlock Text="Window / full screen" Style="{StaticResource HintText}"/>
                 <Border Style="{StaticResource KeyCap}"><TextBlock Text="Esc" Style="{StaticResource KeyCapText}"/></Border>
                 <TextBlock Text="Mini player" Style="{StaticResource HintText}"/>
                 <Border Style="{StaticResource KeyCap}"><TextBlock Text="Hold Esc" Style="{StaticResource KeyCapText}"/></Border>
@@ -196,5 +218,7 @@
                 </StackPanel>
             </Border>
         </Grid>
+        </Grid>
+        </vlc:VideoView>
     </Grid>
 </Window>
