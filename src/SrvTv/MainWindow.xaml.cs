@@ -372,6 +372,17 @@ public partial class MainWindow : Window
 
     private void OnPreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (UpdateOverlay.Visibility == Visibility.Visible)
+        {
+            // Update required: Esc can't dismiss it; Tab/arrows/Enter work the two buttons.
+            if (e.Key is Key.Escape) e.Handled = true;
+            else if (e.Key is Key.Left or Key.Right)
+            {
+                (BtnUpdateRequired.IsKeyboardFocused ? (Button)BtnUpdateExit : BtnUpdateRequired).Focus();
+                e.Handled = true;
+            }
+            return;
+        }
         if (ExitOverlay.Visibility == Visibility.Visible)
         {
             if (e.Key == Key.Escape) { HideExitOverlay(); e.Handled = true; }
@@ -710,9 +721,25 @@ public partial class MainWindow : Window
     private void ShowUpdateReady()
     {
         if (Updater.PendingVersion == null) return;
-        UpdateText.Text = $"Update to {Updater.PendingVersion.ToString(3)}";
+        var v = Updater.PendingVersion.ToString(3);
+        UpdateText.Text = $"Update to {v}";
         BtnUpdate.Visibility = Visibility.Visible;
-        ShowToast($"Srv TV {Updater.PendingVersion.ToString(3)} is ready. It installs when you close the app, or click Update.");
+        // "Update required" popup: the only ways out are updating or exiting.
+        UpdateTitle.Text = $"Srv TV {v} is ready";
+        var notes = string.Join("\n", Updater.PendingNotes
+            .Split('\n').Select(l => l.Trim()).Where(l => l.Length > 0));
+        UpdateNotes.Text = notes;
+        UpdateNotes.Visibility = notes.Length > 0 ? Visibility.Visible : Visibility.Collapsed;
+        ExitOverlay.Visibility = Visibility.Collapsed;
+        UpdateOverlay.Visibility = Visibility.Visible;
+        if (IsActive) Activate();
+        Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => BtnUpdateRequired.Focus()));
+    }
+
+    private void OnUpdateExit(object sender, RoutedEventArgs e)
+    {
+        AppState.Instance.Shutdown();
+        Application.Current.Shutdown(); // the pending update installs on exit (App.OnExit)
     }
 
     private void OnUpdateNow(object sender, RoutedEventArgs e)

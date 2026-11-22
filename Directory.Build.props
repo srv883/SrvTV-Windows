@@ -1,8 +1,8 @@
-<Project>
+﻿<Project>
   <!-- One version for the app and its installer. Bump it (or let
        installer/publish-release.ps1 do it) for every release; installed
        copies update themselves when GitHub has a higher version. -->
   <PropertyGroup>
-    <Version>1.1.0</Version>
+    <Version>1.2.0</Version>
   </PropertyGroup>
 </Project>

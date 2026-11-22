@@ -25,6 +25,7 @@ internal static class Updater
     // Ready-to-run setup for a newer version, once downloaded and verified.
     public static string? PendingSetup { get; private set; }
     public static Version? PendingVersion { get; private set; }
+    public static string PendingNotes { get; private set; } = "";
 
     public static event Action? UpdateReady;
 
@@ -56,7 +57,9 @@ internal static class Updater
         if (!Enabled) return;
         _ = Task.Run(async () =>
         {
-            await Task.Delay(TimeSpan.FromSeconds(TestApi != null ? 3 : 30)).ConfigureAwait(false);
+            // Soon after start, so the "update required" popup shows while the
+            // app is opening rather than in the middle of watching.
+            await Task.Delay(TimeSpan.FromSeconds(TestApi != null ? 3 : 8)).ConfigureAwait(false);
             while (true)
             {
                 try { await CheckAsync().ConfigureAwait(false); }
@@ -117,6 +120,8 @@ internal static class Updater
 
             PendingSetup = final;
             PendingVersion = latest;
+            PendingNotes = root.TryGetProperty("body", out var body) && body.ValueKind == JsonValueKind.String
+                ? body.GetString() ?? "" : "";
             Log.Write($"update: {latest} ready");
             UpdateReady?.Invoke();
             return $"Version {latest.ToString(3)} is ready to install.";
