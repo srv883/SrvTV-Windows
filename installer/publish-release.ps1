@@ -89,13 +89,19 @@ git push origin HEAD "v$Version"
 if ($LASTEXITCODE -ne 0) { throw "Windows push failed" }
 
 Write-Host "6/6 Publishing the shared release..."
-$assets = @()
+$apkAssets = @()
 foreach ($edition in "sourav", "parents") {
     $apk = Join-Path $AndroidRepo "dist\android\SrvTV-$edition.apk"
-    $assets += $apk, "$apk.sha256"
+    $apkAssets += $apk, "$apk.sha256"
 }
-$assets += $setup, $setupHash, (Join-Path $PSScriptRoot "install.ps1"), $webZip, $webHash
+$assets = $apkAssets + @($setup, $setupHash, (Join-Path $PSScriptRoot "install.ps1"), $webZip, $webHash)
 gh release create "v$Version" @assets --repo srv883/SrvTV-Windows `
     --title "Srv TV $Version" --notes $Notes --latest
 if ($LASTEXITCODE -ne 0) { throw "gh release create failed" }
+
+# Migration mirror: TV boxes still running the previous updater only look
+# for android-v* tags, so give them one release that carries the new APKs.
+gh release create "android-v$Version" @apkAssets --repo srv883/SrvTV-Windows `
+    --title "Srv TV Android $Version" --notes $Notes --latest=false
+if ($LASTEXITCODE -ne 0) { throw "gh release create failed for the Android migration mirror" }
 Write-Host "Released Srv TV $Version for Android TV, Windows and web."
