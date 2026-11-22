@@ -17,6 +17,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $repo = Split-Path -Parent $PSScriptRoot
+Set-Location $repo
 if (-not $AndroidRepo) { $AndroidRepo = Join-Path (Split-Path -Parent $repo) "IPTVApp" }
 $webDir = Join-Path $AndroidRepo "web"
 if (-not (Test-Path $AndroidRepo)) { throw "Android repo not found at $AndroidRepo (pass -AndroidRepo)" }
@@ -40,6 +41,9 @@ if ([version]$Version -le $highest) { throw "New version $Version must be higher
 Write-Host "1/6 Building Android $Version..."
 & (Join-Path $AndroidRepo "scripts\publish-android-release.ps1") -Version $Version
 if ($LASTEXITCODE -ne 0) { throw "Android build failed" }
+# That script changes the working directory to its own repo. Come back before
+# any of the Windows git/build steps below.
+Set-Location $repo
 
 Write-Host "2/6 Building Windows $Version..."
 $props = Join-Path $repo "Directory.Build.props"
