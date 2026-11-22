@@ -105,7 +105,7 @@ public sealed class ChannelRepository
     // seeding and the "top of Favorites" order match on them.
     private static readonly string[] PinnedPanelTvgIds =
     {
-        "bz8n", "bbym", "b22h", "b1au", "bfxw", "bqj2", "b77z", "bi9k",
+        "bz8n", "bbym", "b22h", "b1au", "bfxw", "bqj2", "b77z", "bi9k", "bob4",
     };
 
     private static readonly Dictionary<string, string> NameOverrides = new()
@@ -138,6 +138,30 @@ public sealed class ChannelRepository
         ["http://85.117.61.84/setanta2/index.m3u8"] = SetantaWorkingUrl,
         ["http://sewv654wfcsdwfi87fwvgbngh.siauliairsavlt.pw/iptv/8P7MBSH7RRPL53/20074/index.m3u8"] =
             SetantaWorkingUrl,
+        // Dead premium public-list routes -> matching panel feeds. The
+        // NameRoutes below refine Select 1 vs 2 where one URL is shared.
+        ["https://vg162.adcdsd123321.shop/7.m3u8"] =
+            "http://103.151.60.162:2122/play/bob4/index.m3u8?token=",
+        ["http://116.90.120.149:8000/play/a11x/index.m3u8"] =
+            "http://103.151.60.162:2122/play/b77z/index.m3u8?token=",
+        ["http://tvsen7.aynascope.net/ssport2hd/index.m3u8"] =
+            "http://103.151.60.162:2122/play/bi9k/index.m3u8?token=",
+    };
+
+    // Name-level routing: a feed refresh can repoint a channel to a new dead
+    // URL, so pin the known-live panel feed by brand. Ids (and favorites)
+    // stay untouched. Mirrors the Android/web PREFERRED_ROUTES tables.
+    private static readonly (System.Text.RegularExpressions.Regex Pattern, string Url)[] NameRoutes =
+    {
+        (new System.Text.RegularExpressions.Regex(@"bein\s+sports?\s*1\b(?!\s*turk)",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+            "http://103.151.60.162:2122/play/bob4/index.m3u8?token="),
+        (new System.Text.RegularExpressions.Regex(@"star\s+sports?\s+select\s+1",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+            "http://103.151.60.162:2122/play/b77z/index.m3u8?token="),
+        (new System.Text.RegularExpressions.Regex(@"star\s+sports?\s+select\s+2",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase),
+            "http://103.151.60.162:2122/play/bi9k/index.m3u8?token="),
     };
 
     // These feeds use different display names for the same Sony Ten channel.
@@ -151,6 +175,11 @@ public sealed class ChannelRepository
         ["ten3"] = new[] { "sonysportsten3hindi" },
         ["sonysportsten5"] = new[] { "ten5" },
         ["ten5"] = new[] { "sonysportsten5" },
+        // Select 1/2 panel routes are 503 as of 2026-11-22. Keep Star Sports
+        // 2 DL as an automatic but visibly named stand-in, never as a silent
+        // replacement for a Select card.
+        ["starsportsselect1"] = new[] { "starsports2dl" },
+        ["starsportsselect2"] = new[] { "starsports2dl" },
     };
 
     private static readonly List<string> FavoriteCategoryOrder = new()
@@ -865,6 +894,14 @@ public sealed class ChannelRepository
         if (url != null)
             ch = ch.With(url: url,
                 streamFormat: url.Contains("workers.dev") ? StreamFormat.MP4 : ch.StreamFormat);
+        // Name routing runs last so it also covers refreshed URLs we have not
+        // seen before. Never send Select 1 / Select 2 to Star Sports 2 DL.
+        foreach (var (pattern, route) in NameRoutes)
+        {
+            if (!pattern.IsMatch(ch.Name) || ch.Url == route) continue;
+            ch = ch.With(url: route, streamFormat: StreamFormat.HLS);
+            break;
+        }
         return ch;
     }
 
