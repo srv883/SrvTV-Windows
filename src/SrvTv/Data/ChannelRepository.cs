@@ -74,17 +74,22 @@ public sealed class ChannelRepository
         ["iptv_org_kids"] = null,
     };
 
-    private const int CacheVersion = 17;
+    private const int CacheVersion = 18;
+    // Verified live Setanta feed (Eurasia / Setanta 3). All public Setanta
+    // URLs in iptv-org are dead, so every one is swapped to this route.
+    private const string SetantaWorkingUrl = "http://85.117.61.84/setanta3/index.m3u8";
     private const int MaxSeedFavorites = 60;
     private const int MinCategoryCount = 8;
     private const int RecentLimit = 50;
 
-    // IPTV panel (EasyISP24): the playlist now needs a per-IP token that
-    // /watch/list mints for ~12h. The token rides inside every stream URL,
-    // so we cache it and rebuild the playlist before it expires.
+    // IPTV panel (EasyISP24): the playlist needs a per-IP token that
+    // /watch/list mints for ~1h (measured; the old 10h/6h assumptions let it
+    // expire, after which every panel stream answered 403). The token rides
+    // inside every stream URL, so cache it briefly and rewrite the URLs well
+    // before it ages out.
     private const string PanelBase = "http://103.151.60.162:2122";
-    private const long PanelTokenTtlMs = 10L * 60 * 60 * 1000;
-    private const long PanelRenewIntervalMs = 6L * 60 * 60 * 1000;
+    private const long PanelTokenTtlMs = 30L * 60 * 1000;
+    private const long PanelRenewIntervalMs = 20L * 60 * 1000;
     private const string PanelUserAgent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36";
     private static readonly HttpClient PanelHttp = new() { Timeout = TimeSpan.FromSeconds(6) };
 
@@ -114,10 +119,38 @@ public sealed class ChannelRepository
     // finite moov-at-end recordings, not live.
     private static readonly Dictionary<string, string> UrlOverrides = new()
     {
+        ["http://103.185.24.134:3001/SonyTenSports1/index.m3u8"] =
+            "http://103.151.60.162:2122/play/bz8n/index.m3u8?token=",
+        ["http://103.151.60.162:2122/play/a01b/index.m3u8?hls"] =
+            "http://103.151.60.162:2122/play/bbym/index.m3u8?token=",
+        ["http://103.151.60.162:2122/play/a028/index.m3u8?hls"] =
+            "http://103.151.60.162:2122/play/b1au/index.m3u8?token=",
+        ["https://r2.amml.in/sony-ten-3-hd/live.m3u8"] =
+            "http://103.151.60.162:2122/play/b22h/index.m3u8?token=",
         ["https://cloudplay-sonyliv.pages.dev/max2.m3u8"] =
             "http://107.167.16.138/sonymax2/index.m3u8?token=test",
         ["https://cloudplay-sonyliv.pages.dev/pal.m3u8"] =
             "http://59.103.38.46:8000/play/a0ac/index.m3u8",
+        ["http://stream.mcquack.net/234/index.m3u8"] = SetantaWorkingUrl,
+        ["http://stream.mcquack.net/235/index.m3u8"] = SetantaWorkingUrl,
+        ["http://stream.mcquack.net/313/index.m3u8"] = SetantaWorkingUrl,
+        ["http://stream.mcquack.net/390/index.m3u8"] = SetantaWorkingUrl,
+        ["http://85.117.61.84/setanta2/index.m3u8"] = SetantaWorkingUrl,
+        ["http://sewv654wfcsdwfi87fwvgbngh.siauliairsavlt.pw/iptv/8P7MBSH7RRPL53/20074/index.m3u8"] =
+            SetantaWorkingUrl,
+    };
+
+    // These feeds use different display names for the same Sony Ten channel.
+    // Keep their panel entries in the failure plan so every platform can move
+    // from a dead public-list URL to a matching panel mirror automatically.
+    private static readonly Dictionary<string, string[]> MirrorAliases = new()
+    {
+        ["sonysportsten2"] = new[] { "sonysports2" },
+        ["sonysports2"] = new[] { "sonysportsten2" },
+        ["sonysportsten3hindi"] = new[] { "ten3" },
+        ["ten3"] = new[] { "sonysportsten3hindi" },
+        ["sonysportsten5"] = new[] { "ten5" },
+        ["ten5"] = new[] { "sonysportsten5" },
     };
 
     private static readonly List<string> FavoriteCategoryOrder = new()
@@ -528,7 +561,7 @@ public sealed class ChannelRepository
         if (!string.IsNullOrWhiteSpace(token))
         {
             var first = await FetchPanelPlaylistAsync(token).ConfigureAwait(false);
-            if (first.Count > 0) return first;
+            if (first.Count > 0) return WithPanelFallback(first, token);
             // A stale/blocked token answers 403; drop it and mint a fresh one.
             _prefs.PutString("panel_token", "");
             _prefs.PutLong("panel_token_at", 0L);
@@ -537,7 +570,7 @@ public sealed class ChannelRepository
             if (!string.IsNullOrWhiteSpace(retry))
             {
                 var second = await FetchPanelPlaylistAsync(retry).ConfigureAwait(false);
-                if (second.Count > 0) return second;
+                if (second.Count > 0) return WithPanelFallback(second, retry);
             }
         }
         // Direct panel unreachable (the carrier blocks its address here):
@@ -547,6 +580,24 @@ public sealed class ChannelRepository
         // Panel down / blocked: keep the last-known channel list so Sony
         // Sports / Star Sports never vanish from the library on a refresh.
         return LoadPanelFallback(null);
+    }
+
+    // The panel sometimes drops premium feeds (Sony Sports, Ten Cricket)
+    // from its playlist while the /play endpoints still work. Keep the
+    // shipped last-known line-up merged in: live entries win, the shipped
+    // list fills the gaps so those channels (and their favorites) stay.
+    private static List<Channel> WithPanelFallback(List<Channel> live, string? token)
+    {
+        var result = new List<Channel>(live);
+        var seen = new HashSet<string>(
+            live.Select(c => c.TvgId).Where(id => !string.IsNullOrWhiteSpace(id)),
+            StringComparer.OrdinalIgnoreCase);
+        foreach (var ch in LoadPanelFallback(token))
+        {
+            if (!string.IsNullOrWhiteSpace(ch.TvgId) && !seen.Add(ch.TvgId)) continue;
+            result.Add(ch);
+        }
+        return result;
     }
 
     // Mint a token through the phone proxy (so it is bound to the phone's
@@ -580,9 +631,9 @@ public sealed class ChannelRepository
         catch { return null; }
     }
 
-    // The phone's panel token ages out after ~12h while this app stays open.
-    // Re-mint it in the background and swap it inside the already-proxied
-    // URLs: the channel ids stay untouched, so favorites and playback hold.
+    // Panel tokens age out after ~1h while this app stays open. Re-mint them
+    // in the background and swap them inside the already-published URLs: the
+    // channel ids stay untouched, so favorites and playback hold.
     public void StartPanelAutoRenew()
     {
         if (_renewTask != null) return;
@@ -595,7 +646,7 @@ public sealed class ChannelRepository
         while (!ct.IsCancellationRequested)
         {
             try { await EnsurePanelTokenFreshAsync().ConfigureAwait(false); } catch { }
-            try { await Task.Delay(TimeSpan.FromMinutes(15), ct).ConfigureAwait(false); }
+            try { await Task.Delay(TimeSpan.FromMinutes(10), ct).ConfigureAwait(false); }
             catch { return; }
         }
     }
@@ -605,35 +656,80 @@ public sealed class ChannelRepository
         if (!await _renewGate.WaitAsync(0).ConfigureAwait(false)) return false;
         try
         {
+            bool hasDirect, hasPhone;
             lock (_dataLock)
             {
-                if (!_channels.Any(IsPhonePanelChannel)) return false;
+                hasDirect = _channels.Any(IsDirectPanelChannel);
+                hasPhone = _channels.Any(IsPhonePanelChannel);
             }
+            if (!hasDirect && !hasPhone) return false;
+
             var now = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds();
-            var at = _prefs.GetLong("panel_phone_token_at", 0L);
-            if (!force && at > 0 && now - at is >= 0 and < PanelRenewIntervalMs)
-                return false;
-            var token = await FetchPhonePanelTokenAsync().ConfigureAwait(false);
-            if (string.IsNullOrWhiteSpace(token)) return false;
             var changed = 0;
-            lock (_dataLock)
+
+            // Direct panel URLs: mint on this machine and swap the token in
+            // place. Ids stay untouched, so favorites and playback hold.
+            if (hasDirect)
             {
-                for (var i = 0; i < _channels.Count; i++)
+                var at = _prefs.GetLong("panel_token_at", 0L);
+                var due = force || at <= 0 || now - at < 0 || now - at >= PanelRenewIntervalMs;
+                if (due)
                 {
-                    var ch = _channels[i];
-                    if (!IsPhonePanelChannel(ch)) continue;
-                    var url = RenewPhonePanelUrl(ch.Url, token);
-                    if (url == ch.Url) continue;
-                    _channels[i] = ch.With(url: url);
-                    changed++;
+                    var token = await FetchPanelTokenAsync().ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(token))
+                    {
+                        lock (_dataLock)
+                        {
+                            for (var i = 0; i < _channels.Count; i++)
+                            {
+                                var ch = _channels[i];
+                                if (!IsDirectPanelChannel(ch)) continue;
+                                var url = RenewDirectPanelUrl(ch.Url, token);
+                                if (url == ch.Url) continue;
+                                _channels[i] = ch.With(url: url);
+                                changed++;
+                            }
+                        }
+                        _prefs.PutString("panel_token", token);
+                        _prefs.PutLong("panel_token_at", now);
+                        _prefs.Apply();
+                    }
                 }
             }
-            _prefs.PutLong("panel_phone_token_at", now);
-            _prefs.Apply();
+
+            // Phone-proxied panel URLs (used when this PC cannot reach the
+            // panel directly): only the phone can mint a token for those.
+            if (hasPhone)
+            {
+                var at = _prefs.GetLong("panel_phone_token_at", 0L);
+                var due = force || at <= 0 || now - at < 0 || now - at >= PanelRenewIntervalMs;
+                if (due)
+                {
+                    var token = await FetchPhonePanelTokenAsync().ConfigureAwait(false);
+                    if (!string.IsNullOrWhiteSpace(token))
+                    {
+                        lock (_dataLock)
+                        {
+                            for (var i = 0; i < _channels.Count; i++)
+                            {
+                                var ch = _channels[i];
+                                if (!IsPhonePanelChannel(ch)) continue;
+                                var url = RenewPhonePanelUrl(ch.Url, token);
+                                if (url == ch.Url) continue;
+                                _channels[i] = ch.With(url: url);
+                                changed++;
+                            }
+                        }
+                        _prefs.PutLong("panel_phone_token_at", now);
+                        _prefs.Apply();
+                    }
+                }
+            }
+
             if (changed > 0)
             {
                 CacheChannels(updateTimestamp: false);
-                Log.Write($"panel token auto-renewed via phone; rewrote {changed} urls");
+                Log.Write($"panel token auto-renewed; rewrote {changed} urls");
             }
             return changed > 0;
         }
@@ -667,6 +763,17 @@ public sealed class ChannelRepository
         return prefix + Uri.EscapeDataString(renewed);
     }
 
+    private static bool IsDirectPanelChannel(Channel ch)
+        => ch.Url.StartsWith(PanelBase + "/play/", StringComparison.Ordinal);
+
+    private static string RenewDirectPanelUrl(string url, string token)
+    {
+        if (!url.StartsWith(PanelBase + "/play/", StringComparison.Ordinal)) return url;
+        if (!url.Contains("token=", StringComparison.Ordinal)) return url;
+        return System.Text.RegularExpressions.Regex.Replace(
+            url, "token=[^&\\s]*", "token=" + token);
+    }
+
     // Last-known panel playlist shipped with the app. Used when the panel
     // is unreachable so premium channels stay listed (and can play again
     // as soon as the panel is back with a fresh token).
@@ -689,13 +796,22 @@ public sealed class ChannelRepository
 
     private static async Task<List<Channel>> FetchPanelPlaylistAsync(string token)
     {
-        try
+        // all=1 returns the panel's full line-up (including premium feeds the
+        // short "online" playlist omits); fall back to the short one if empty.
+        foreach (var url in new[]
         {
-            return await M3UParser
-                .ParseFromUrlAsync($"{PanelBase}/playlist.m3u8?hls&token={token}")
-                .ConfigureAwait(false);
+            $"{PanelBase}/playlist.m3u8?hls&token={token}&all=1",
+            $"{PanelBase}/playlist.m3u8?hls&token={token}",
+        })
+        {
+            try
+            {
+                var list = await M3UParser.ParseFromUrlAsync(url).ConfigureAwait(false);
+                if (list.Count > 0) return list;
+            }
+            catch { }
         }
-        catch { return new List<Channel>(); }
+        return new List<Channel>();
     }
 
     public async Task RefreshPlaylistAsync(string playlistId)
@@ -738,16 +854,28 @@ public sealed class ChannelRepository
 
     private static Channel WithUrlOverrides(Channel ch)
     {
-        return UrlOverrides.TryGetValue(ch.Url, out var url) ? ch.With(url: url) : ch;
+        var url = FindUrlOverride(ch.Url);
+        return url != null ? ch.With(url: url) : ch;
     }
 
     private static Channel WithOverrides(Channel ch)
     {
         if (NameOverrides.TryGetValue(ch.Url, out var name)) ch = ch.With(name: name);
-        if (UrlOverrides.TryGetValue(ch.Url, out var url))
+        var url = FindUrlOverride(ch.Url);
+        if (url != null)
             ch = ch.With(url: url,
                 streamFormat: url.Contains("workers.dev") ? StreamFormat.MP4 : ch.StreamFormat);
         return ch;
+    }
+
+    private static string? FindUrlOverride(string sourceUrl)
+    {
+        if (UrlOverrides.TryGetValue(sourceUrl, out var replacement)) return replacement;
+        // Cached panel URLs may already have a token. Match the stable path
+        // after removing only that query parameter.
+        var withoutToken = System.Text.RegularExpressions.Regex.Replace(
+            sourceUrl, "([?&])token=[^&]*&?", "$1").TrimEnd('?', '&');
+        return UrlOverrides.TryGetValue(withoutToken, out replacement) ? replacement : null;
     }
 
     private static List<Channel> Dedupe(List<Channel> channels)
@@ -953,17 +1081,21 @@ public sealed class ChannelRepository
     {
         var key = EpgRepository.NormalizeName(channel.Name);
         if (key.Length == 0) return new List<Channel>();
+        var relatedKeys = new HashSet<string>(StringComparer.Ordinal) { key };
+        if (MirrorAliases.TryGetValue(key, out var aliases))
+            foreach (var alias in aliases) relatedKeys.Add(alias);
         var curRank = ResolutionRank(channel.Name);
         return Channels
             .Where(c => c.Id != channel.Id && c.Url != channel.Url
-                && EpgRepository.NormalizeName(c.Name) == key)
+                && relatedKeys.Contains(EpgRepository.NormalizeName(c.Name)))
             .GroupBy(c => c.Url).Select(g => g.First())
             .OrderBy(c =>
             {
+                var nameRank = EpgRepository.NormalizeName(c.Name) == key ? 0 : 1;
                 var r = ResolutionRank(c.Name);
                 if (r < 0) r = curRank;
                 var cc = curRank < 0 ? r : curRank;
-                return r > cc ? 100 + r : cc - r;
+                return nameRank * 1000 + (r > cc ? 100 + r : cc - r);
             })
             .ThenBy(c => c.ChannelNumber)
             .ToList();

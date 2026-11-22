@@ -355,8 +355,8 @@ public partial class MainWindow : Window
     {
         if (Data.OfficialApps.IsShortcut(ch))
         {
-            Data.OfficialApps.Open(ch);
-            ShowToast($"Opening {ch.Name} in your browser");
+            new WebPlayerWindow(ch).Show();
+            ShowToast($"Opening {ch.Name} in Srv TV");
             return;
         }
         AppState.Instance.LastOpenedChannelId = ch.Id;

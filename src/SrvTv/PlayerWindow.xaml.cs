@@ -26,6 +26,8 @@ public partial class PlayerWindow : Window
     private readonly List<Channel> _failurePlan = new();
     private int _failurePlanPos;
     private string? _failurePlanId;
+    private DateTime _lastPlaybackErrorUtc = DateTime.MinValue;
+    private int _sameSourceRetries;
     private bool _closing;
 
     // Channel guide (TV parity): frozen per-section order, double-Enter
@@ -114,6 +116,14 @@ public partial class PlayerWindow : Window
         {
             var lib = AppState.Instance.EnsureLib();
             _media = new Media(lib, channel.Url, FromType.FromLocation);
+            if (IsSonyTen3(channel))
+            {
+                // The Ten 3 panel feed has brief segment/timestamp hiccups.
+                // A deeper LibVLC network buffer absorbs those without
+                // changing the source URL or affecting other channels.
+                _media.AddOption(":network-caching=5000");
+                _media.AddOption(":live-caching=5000");
+            }
             if (UiTest.On) _media.AddOption(":no-audio");
             _player.Play(_media);
             Log.Write("playing: " + channel.Name);
@@ -166,15 +176,28 @@ public partial class PlayerWindow : Window
             Dispatcher.BeginInvoke(() =>
             {
                 if (_closing || _parked) return;
+                var now = DateTime.UtcNow;
+                if (IsSonyTen3(_channel) && now - _lastPlaybackErrorUtc < TimeSpan.FromSeconds(8))
+                {
+                    // LibVLC can emit multiple error callbacks for one brief
+                    // live segment fault. Ignore the callback burst instead
+                    // of stopping/reopening the stream repeatedly.
+                    Log.Write("ignored duplicate Sony Ten 3 playback error");
+                    return;
+                }
+                _lastPlaybackErrorUtc = now;
                 Buffering.Visibility = Visibility.Collapsed;
                 if (_failurePlanId != _channel.Id)
                 {
                     _failurePlanId = _channel.Id;
                     _failurePlanPos = 0;
+                    _sameSourceRetries = 0;
                     _failurePlan.Clear();
                     _failurePlan.Add(_channel);
                     _failurePlan.AddRange(AppState.Instance.Repo.FindAlternates(_channel).Take(3));
                 }
+                if (IsSonyTen3(_channel) && _sameSourceRetries >= 2 && _failurePlanPos == 0)
+                    _failurePlanPos = 1; // after two fresh opens, use a known mirror if available
                 ShowToast(_failurePlanPos == 0 ? "Signal glitch — reconnecting..." : "Trying alternate source...");
                 Log.Write("playback error: " + _channel.Url);
                 _recoveryTimer.Stop();
@@ -190,7 +213,9 @@ public partial class PlayerWindow : Window
         if (_closing || _parked || _player == null) return;
         if (_failurePlanPos < _failurePlan.Count)
         {
-            PlayChannel(_failurePlan[_failurePlanPos++]);
+            var next = _failurePlan[_failurePlanPos++];
+            if (IsSonyTen3(_channel) && next.Url == _channel.Url) _sameSourceRetries++;
+            PlayChannel(next);
             return;
         }
         _failurePlan.Clear();
@@ -198,6 +223,12 @@ public partial class PlayerWindow : Window
         _failurePlanId = null;
         ShowToast("Channel not working — moving on");
         SwitchChannel(1);
+    }
+
+    private static bool IsSonyTen3(Channel channel)
+    {
+        var name = channel.Name.ToLowerInvariant();
+        return name.Contains("ten 3") || name.Contains("ten3") || name == "ten 3";
     }
 
     private void UpdateEpgLine()
