@@ -82,6 +82,10 @@
                             </Border>
                         </StackPanel>
                     </Button>
+                    <Button x:Name="BtnFindLinks" Click="OnFindLinks" Style="{StaticResource Btn}"
+                            Height="42" Padding="14,0" Margin="0,0,10,0" Content="Find links"
+                            Background="{StaticResource Surface0Brush}"
+                            ToolTip="Check every channel and repair dead links with working mirrors"/>
                     <Button x:Name="BtnRefresh" Click="OnRefresh" Style="{StaticResource BtnIcon}"
                             Content="&#xE72C;" Margin="0,0,10,0" ToolTip="Refresh channel lists"/>
                     <Button x:Name="BtnSettings" Click="OnSettings" Style="{StaticResource BtnIcon}"

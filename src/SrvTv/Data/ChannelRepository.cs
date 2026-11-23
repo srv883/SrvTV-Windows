@@ -30,11 +30,23 @@ public sealed class ChannelRepository
     private readonly SemaphoreSlim _refreshGate = new(1, 1);
     private readonly SemaphoreSlim _probeGate = new(1, 1);
     private readonly SemaphoreSlim _renewGate = new(1, 1);
+    private readonly SemaphoreSlim _findGate = new(1, 1);
     private CancellationTokenSource? _renewCts;
+    private CancellationTokenSource? _findCts;
     private Task? _renewTask;
+
+    private readonly WorkingLinksStore _workingLinksStore;
+    private Dictionary<string, WorkingLink> _workingLinks = new(StringComparer.Ordinal);
+    private Dictionary<string, WorkingLink> _workingLinksByKey = new(StringComparer.Ordinal);
+    private static readonly System.Text.RegularExpressions.Regex PanelTokenParam =
+        new(@"([?&])token=[^&]*&?");
 
     public Action<string>? ProgressChanged;
     public Action<bool>? BackgroundBusyChanged;
+    // tested, total, repaired — threaded through to the Settings/main window.
+    public Action<int, int, int>? FindLinksProgress;
+    public bool FindLinksRunning { get { lock (_dataLock) return _findRunning; } }
+    private bool _findRunning;
 
     // Sourav edition: no seed (user curates), no Odia tab.
     private const string FavoriteSeed = "";
@@ -226,6 +238,9 @@ public sealed class ChannelRepository
     public ChannelRepository(PrefsStore prefs)
     {
         _prefs = prefs;
+        _workingLinksStore = WorkingLinksStore.Default();
+        _workingLinks = _workingLinksStore.Read();
+        RebuildWorkingLinkIndex();
     }
 
     public List<Channel> Channels { get { lock (_dataLock) return _channels.ToList(); } }
@@ -430,7 +445,10 @@ public sealed class ChannelRepository
             .ToList();
         allChannels.AddRange(LoadBundledChannels());
         allChannels.AddRange(await LoadPanelChannelsAsync().ConfigureAwait(false));
-        return Dedupe(FilterChannels(allChannels)).Select(WithOverrides).ToList();
+        // Learned links are applied last so they win over static routes; ids
+        // (and favorites) stay exactly as the feed computed them.
+        return Dedupe(FilterChannels(allChannels))
+            .Select(ch => ApplyWorkingLink(WithOverrides(ch))).ToList();
     }
 
     private void PublishChannels(List<Channel> channels)
@@ -856,7 +874,8 @@ public sealed class ChannelRepository
             lock (_dataLock)
             {
                 _channels.RemoveAll(c => c.Source.ToString() == playlistId);
-                _channels.AddRange(Dedupe(FilterChannels(fresh)).Select(WithOverrides));
+                _channels.AddRange(Dedupe(FilterChannels(fresh))
+                    .Select(ch => ApplyWorkingLink(WithOverrides(ch))));
             }
             UpdateFavoriteStatus();
             ApplyWatchTimes();
@@ -913,6 +932,244 @@ public sealed class ChannelRepository
         var withoutToken = System.Text.RegularExpressions.Regex.Replace(
             sourceUrl, "([?&])token=[^&]*&?", "$1").TrimEnd('?', '&');
         return UrlOverrides.TryGetValue(withoutToken, out replacement) ? replacement : null;
+    }
+
+    // ------------------------------------------------------------------
+    // On-demand "Find working links": verify every channel and, where its URL
+    // is dead, persist the first mirror/panel route that positively answers.
+    // Overrides are keyed by the stable id and stored token-free, so favorites,
+    // watch history and the cache format are never touched.
+    // ------------------------------------------------------------------
+
+    private void RebuildWorkingLinkIndex()
+    {
+        _workingLinksByKey = _workingLinks.Values
+            .Where(l => !string.IsNullOrWhiteSpace(l.NameKey))
+            .GroupBy(l => l.NameKey, StringComparer.Ordinal)
+            .ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+    }
+
+    private static string StableUrl(string url)
+        => PanelTokenParam.Replace(url ?? "", "$1").TrimEnd('?', '&');
+
+    private static string WithPanelToken(string url, string token)
+    {
+        if (string.IsNullOrWhiteSpace(token)) return url;
+        if (url.StartsWith(PanelBase + "/play/", StringComparison.Ordinal))
+        {
+            var param = new System.Text.RegularExpressions.Regex(@"([?&])token=[^&]*");
+            return param.IsMatch(url)
+                ? param.Replace(url, "${1}token=" + token)
+                : url + (url.Contains('?') ? "&" : "?") + "token=" + token;
+        }
+        // Phone-proxied panel streams carry the token inside /p?u=<escaped url>.
+        var prefix = PhoneProxyBase + "/p?u=";
+        if (url.StartsWith(prefix, StringComparison.Ordinal))
+        {
+            try
+            {
+                var inner = Uri.UnescapeDataString(url[prefix.Length..]);
+                if (!inner.Contains("/play/", StringComparison.Ordinal)) return url;
+                inner = new System.Text.RegularExpressions.Regex(@"token=[^&\s]*").IsMatch(inner)
+                    ? new System.Text.RegularExpressions.Regex(@"token=[^&\s]*").Replace(inner, "token=" + token)
+                    : inner + (inner.Contains('?') ? "&" : "?") + "token=" + token;
+                return prefix + Uri.EscapeDataString(inner);
+            }
+            catch { return url; }
+        }
+        return url;
+    }
+
+    private Channel ApplyWorkingLink(Channel ch)
+    {
+        var key = EpgRepository.NormalizeName(ch.Name);
+        _workingLinks.TryGetValue(ch.Id, out var link);
+        if (link == null) _workingLinksByKey.TryGetValue(key, out link);
+        var url = link?.Url;
+        if (string.IsNullOrWhiteSpace(url)) return ch;
+        var authorized = WithPanelToken(url, _prefs.GetString("panel_token", ""));
+        return authorized == ch.Url ? ch : ch.With(url: authorized);
+    }
+
+    public sealed class FindLinksResult
+    {
+        public int Tested;
+        public int Total;
+        public int Repaired;
+        public int Dead;
+    }
+
+    public void CancelFindLinks()
+    {
+        try { _findCts?.Cancel(); } catch { }
+    }
+
+    public async Task<FindLinksResult> FindWorkingLinksAsync(CancellationToken ct = default)
+    {
+        var result = new FindLinksResult();
+        if (!await _findGate.WaitAsync(0, ct).ConfigureAwait(false)) return result;
+        lock (_dataLock) _findRunning = true;
+        using var timeout = new CancellationTokenSource(TimeSpan.FromMinutes(20));
+        using var linked = CancellationTokenSource.CreateLinkedTokenSource(ct, timeout.Token);
+        _findCts = linked;
+        try
+        {
+            var snapshot = Channels;
+            if (snapshot.Count == 0) return result;
+            result.Total = snapshot.Count;
+            var token = _prefs.GetString("panel_token", "");
+
+            // Bundled mirrors and the panel lineup carry routes absent from the
+            // public playlists (bo3x/bcfe, odia mirrors, Select duplicates).
+            var extras = LoadBundledChannels();
+            extras.AddRange(LoadPanelFallback(token));
+            var byName = new Dictionary<string, List<Channel>>(StringComparer.Ordinal);
+            var byTvg = new Dictionary<string, List<Channel>>(StringComparer.OrdinalIgnoreCase);
+            foreach (var ch in snapshot.Select(ApplyWorkingLink).Concat(extras))
+            {
+                var key = EpgRepository.NormalizeName(ch.Name);
+                if (key.Length > 0)
+                {
+                    if (!byName.TryGetValue(key, out var list)) byName[key] = list = new List<Channel>();
+                    list.Add(ch);
+                }
+                if (!string.IsNullOrWhiteSpace(ch.TvgId))
+                {
+                    if (!byTvg.TryGetValue(ch.TvgId, out var list)) byTvg[ch.TvgId] = list = new List<Channel>();
+                    list.Add(ch);
+                }
+            }
+            var nameKeys = new Dictionary<string, string>(StringComparer.Ordinal);
+            foreach (var c in snapshot)
+                if (!nameKeys.ContainsKey(c.Id)) nameKeys[c.Id] = EpgRepository.NormalizeName(c.Name);
+
+            List<Channel> CandidatesFor(Channel channel)
+            {
+                var found = new Dictionary<string, Channel>(StringComparer.Ordinal);
+                found[StableUrl(channel.Url)] = channel;
+                var key = EpgRepository.NormalizeName(channel.Name);
+                var keys = new List<string>();
+                if (key.Length > 0) keys.Add(key);
+                if (MirrorAliases.TryGetValue(key, out var aliases)) keys.AddRange(aliases);
+                var pool = new List<Channel>();
+                foreach (var k in keys)
+                    if (byName.TryGetValue(k, out var list)) pool.AddRange(list);
+                if (!string.IsNullOrWhiteSpace(channel.TvgId) && byTvg.TryGetValue(channel.TvgId, out var tl))
+                    pool.AddRange(tl);
+                foreach (var (pattern, route) in NameRoutes)
+                {
+                    if (!pattern.IsMatch(channel.Name)) continue;
+                    pool.Add(channel.With(url: route));
+                    break;
+                }
+                // Panel routes first: they carry the channels this household
+                // actually watches. OrderBy is stable in LINQ.
+                var ordered = pool.OrderBy(c =>
+                    c.Url.StartsWith(PanelBase + "/play/", StringComparison.Ordinal) ? 0 : 1);
+                foreach (var cand in ordered)
+                {
+                    if (found.Count >= 6) break;
+                    var url = WithPanelToken(cand.Url, token);
+                    var stable = StableUrl(url);
+                    if (!found.ContainsKey(stable)) found[stable] = cand.With(url: url);
+                }
+                return found.Values.ToList();
+            }
+
+            using var gate = new SemaphoreSlim(10);
+            var counterLock = new object();
+            var updates = new Dictionary<string, WorkingLink>(StringComparer.Ordinal);
+            var gone = new HashSet<string>(StringComparer.Ordinal);
+            var tasks = snapshot.Select(async original =>
+            {
+                await gate.WaitAsync(linked.Token).ConfigureAwait(false);
+                try
+                {
+                    if (linked.IsCancellationRequested) return;
+                    var current = ApplyWorkingLink(original);
+                    var health = await StreamProber.ProbeFastAsync(current.Url, current.StreamFormat)
+                        .ConfigureAwait(false);
+                    string? replacement = null;
+                    if (health != StreamProber.ProbeResult.Working)
+                    {
+                        foreach (var cand in CandidatesFor(current))
+                        {
+                            if (StableUrl(cand.Url) == StableUrl(current.Url)) continue;
+                            if (await StreamProber.ProbeFastAsync(cand.Url, cand.StreamFormat)
+                                    .ConfigureAwait(false) == StreamProber.ProbeResult.Working)
+                            {
+                                replacement = cand.Url;
+                                break;
+                            }
+                        }
+                    }
+                    lock (counterLock)
+                    {
+                        result.Tested++;
+                        if (replacement != null)
+                        {
+                            result.Repaired++;
+                            updates[current.Id] = new WorkingLink
+                            {
+                                Id = current.Id,
+                                Name = current.Name,
+                                NameKey = nameKeys[current.Id],
+                                OriginalUrl = StableUrl(current.Url),
+                                Url = StableUrl(replacement),
+                                Reason = "current failed; alternate answered #EXTM3U",
+                                At = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                            };
+                        }
+                        else if (health == StreamProber.ProbeResult.Dead)
+                        {
+                            result.Dead++;
+                            gone.Add(current.Id);
+                        }
+                        if (result.Tested % 25 == 0 || result.Tested == snapshot.Count)
+                            FindLinksProgress?.Invoke(result.Tested, snapshot.Count, result.Repaired);
+                    }
+                }
+                finally { gate.Release(); }
+            }).ToList();
+
+            try { await Task.WhenAll(tasks).ConfigureAwait(false); }
+            catch (OperationCanceledException) { /* Stop pressed or time limit */ }
+            catch (Exception ex) { Log.Write("find links pass failed: " + ex.Message); }
+
+            if (updates.Count > 0 || gone.Count > 0)
+            {
+                var previous = _workingLinks;
+                var merged = new Dictionary<string, WorkingLink>(previous, StringComparer.Ordinal);
+                foreach (var id in gone) merged.Remove(id);
+                foreach (var kv in updates) merged[kv.Key] = kv.Value;
+                _workingLinks = merged;
+                RebuildWorkingLinkIndex();
+                _workingLinksStore.Write(merged);
+
+                lock (_dataLock)
+                {
+                    for (int i = 0; i < _channels.Count; i++)
+                    {
+                        var ch = _channels[i];
+                        if (updates.TryGetValue(ch.Id, out var u))
+                            _channels[i] = ch.With(url: WithPanelToken(u.Url, token), isWorking: true);
+                        else if (gone.Contains(ch.Id) && previous.TryGetValue(ch.Id, out var old)
+                                 && !string.IsNullOrWhiteSpace(old.OriginalUrl))
+                            _channels[i] = ch.With(url: WithPanelToken(old.OriginalUrl, token));
+                    }
+                }
+                BuildCategories();
+                CacheChannels(updateTimestamp: false);
+            }
+        }
+        finally
+        {
+            _findCts = null;
+            lock (_dataLock) _findRunning = false;
+            FindLinksProgress?.Invoke(result.Tested, result.Total, result.Repaired);
+            _findGate.Release();
+        }
+        return result;
     }
 
     private static List<Channel> Dedupe(List<Channel> channels)
@@ -1116,14 +1373,15 @@ public sealed class ChannelRepository
 
     public List<Channel> FindAlternates(Channel channel)
     {
-        var key = EpgRepository.NormalizeName(channel.Name);
+        var current = ApplyWorkingLink(channel);
+        var key = EpgRepository.NormalizeName(current.Name);
         if (key.Length == 0) return new List<Channel>();
         var relatedKeys = new HashSet<string>(StringComparer.Ordinal) { key };
         if (MirrorAliases.TryGetValue(key, out var aliases))
             foreach (var alias in aliases) relatedKeys.Add(alias);
-        var curRank = ResolutionRank(channel.Name);
+        var curRank = ResolutionRank(current.Name);
         return Channels
-            .Where(c => c.Id != channel.Id && c.Url != channel.Url
+            .Where(c => c.Id != current.Id && c.Url != current.Url
                 && relatedKeys.Contains(EpgRepository.NormalizeName(c.Name)))
             .GroupBy(c => c.Url).Select(g => g.First())
             .OrderBy(c =>
@@ -1520,7 +1778,8 @@ public sealed class ChannelRepository
             var loaded = JsonSerializer.Deserialize<List<Channel>>(json, JsonOpts) ?? new();
             if (loaded.Count > 0)
             {
-                lock (_dataLock) _channels.AddRange(loaded.Select(WithOverrides));
+                lock (_dataLock) _channels.AddRange(
+                    loaded.Select(ch => ApplyWorkingLink(WithOverrides(ch))));
                 EnsurePinnedSportsFavorites();
                 UpdateFavoriteStatus();
                 ApplyWatchTimes();

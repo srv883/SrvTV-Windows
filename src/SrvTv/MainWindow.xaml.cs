@@ -12,6 +12,7 @@ public partial class MainWindow : Window
     private const double CardStep = 304.0; // 290 card + 2x7 container padding
     private bool _interacted;
     private bool _refreshing;
+    private bool _findingLinks;
     private bool _syncingRail;
     private readonly DispatcherTimer _clock = new();
     private readonly DispatcherTimer _toastTimer = new();
@@ -497,6 +498,49 @@ public partial class MainWindow : Window
                 Loading.Visibility = Visibility.Collapsed;
                 BtnRefresh.IsEnabled = true;
             });
+        }
+    }
+
+    // Rebind the grid after a link-repair pass so the cards carry the new URLs.
+    internal void ReloadGrid()
+    {
+        FillRail();
+        LoadCategory(AppState.Instance.SelectedCategoryId, focusTop: false);
+        ChannelCount.Text = $"{AppState.Instance.Repo.Channels.Count} channels";
+    }
+
+    private async void OnFindLinks(object sender, RoutedEventArgs e)
+    {
+        var repo = AppState.Instance.Repo;
+        if (_findingLinks)
+        {
+            repo.CancelFindLinks();
+            ShowToast("Stopping link check...");
+            return;
+        }
+        _findingLinks = true;
+        BtnFindLinks.Content = "Stop";
+        Action<int, int, int> progress = (tested, total, repaired) =>
+            Dispatcher.InvokeAsync(() => ShowToast($"Checking links {tested}/{total} · {repaired} repaired"));
+        repo.FindLinksProgress += progress;
+        try
+        {
+            var result = await repo.FindWorkingLinksAsync().ConfigureAwait(false);
+            var message = result.Total == 0 ? "Nothing to check yet."
+                : $"Links checked: {result.Tested} · {result.Repaired} repaired" +
+                  (result.Dead > 0 ? $" · {result.Dead} still dead" : "");
+            await Dispatcher.InvokeAsync(() => { ReloadGrid(); ShowToast(message); });
+            Log.Write("find working links: " + message);
+        }
+        catch (Exception ex)
+        {
+            await Dispatcher.InvokeAsync(() => ShowToast("Link check failed: " + ex.Message));
+        }
+        finally
+        {
+            repo.FindLinksProgress -= progress;
+            _findingLinks = false;
+            await Dispatcher.InvokeAsync(() => BtnFindLinks.Content = "Find links");
         }
     }
 

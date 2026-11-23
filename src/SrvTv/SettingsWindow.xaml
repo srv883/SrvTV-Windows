@@ -31,6 +31,27 @@
                 </Grid>
             </Border>
 
+            <!-- Working links -->
+            <Border Background="{StaticResource Surface1Brush}" BorderBrush="{StaticResource StrokeBrush}"
+                    BorderThickness="1" CornerRadius="14" Padding="22,18" Margin="0,0,0,14">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel VerticalAlignment="Center" Margin="0,0,16,0">
+                        <TextBlock Text="Find working links" Foreground="White" FontSize="16" FontWeight="SemiBold"/>
+                        <TextBlock Text="Check every channel and swap in a verified working mirror where the current link is dead. Favorites stay put."
+                                   Foreground="{StaticResource TextSecondaryBrush}" FontSize="13"
+                                   Margin="0,4,0,0" TextWrapping="Wrap"/>
+                        <TextBlock x:Name="FindLinksStatus" Text="" Foreground="{StaticResource FocusBlueBrush}"
+                                   FontSize="13" Margin="0,8,0,0" TextWrapping="Wrap"/>
+                    </StackPanel>
+                    <Button x:Name="BtnFindLinks" Grid.Column="1" Style="{StaticResource BtnPrimary}"
+                            Content="Find links" VerticalAlignment="Center" Click="OnFindLinks"/>
+                </Grid>
+            </Border>
+
             <!-- Favorites import -->
             <Border Background="{StaticResource Surface1Brush}" BorderBrush="{StaticResource StrokeBrush}"
                     BorderThickness="1" CornerRadius="14" Padding="22,18" Margin="0,0,0,14">

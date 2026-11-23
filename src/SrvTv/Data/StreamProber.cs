@@ -77,12 +77,18 @@ public static class StreamProber
         }
     }
 
-    private enum ProbeResult
+    public enum ProbeResult
     {
         Working,
         Dead,
         Unknown,
     }
+
+    // Single-URL check used by "Find working links". Only a positive Working
+    // verdict (HTTP 2xx/3xx + live #EXTM3U prefix) qualifies as a replacement;
+    // a timeout or auth challenge stays Unknown and never swaps a working link.
+    public static Task<ProbeResult> ProbeFastAsync(string url, StreamFormat format)
+        => ProbeUrlAsync(url, format);
 
     private static async Task<ProbeResult> ProbeUrlAsync(string url, StreamFormat format)
     {

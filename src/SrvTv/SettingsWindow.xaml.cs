@@ -6,6 +6,8 @@ namespace SrvTv;
 
 public partial class SettingsWindow : Window
 {
+    private bool _findingLinks;
+
     public SettingsWindow()
     {
         InitializeComponent();
@@ -41,6 +43,48 @@ public partial class SettingsWindow : Window
             Log.Write("manual refresh failed: " + ex);
         }
         await Dispatcher.InvokeAsync(() => BtnRefresh.IsEnabled = true);
+    }
+
+    private async void OnFindLinks(object sender, RoutedEventArgs e)
+    {
+        var repo = AppState.Instance.Repo;
+        if (_findingLinks || repo.FindLinksRunning)
+        {
+            repo.CancelFindLinks();
+            FindLinksStatus.Text = "Stopping after the current checks…";
+            return;
+        }
+        _findingLinks = true;
+        BtnFindLinks.Content = "Stop";
+        FindLinksStatus.Text = "Starting link check…";
+        Action<int, int, int> progress = (tested, total, repaired) =>
+            Dispatcher.InvokeAsync(() => FindLinksStatus.Text = total > 0
+                ? $"Checking {tested} of {total}…  ·  {repaired} repaired"
+                : "Checking links…");
+        repo.FindLinksProgress += progress;
+        try
+        {
+            var result = await repo.FindWorkingLinksAsync().ConfigureAwait(false);
+            var message = result.Total == 0 ? "Nothing to check yet."
+                : $"Checked {result.Tested} channels · {result.Repaired} repaired" +
+                  (result.Dead > 0 ? $" · {result.Dead} still dead" : "");
+            await Dispatcher.InvokeAsync(() =>
+            {
+                FindLinksStatus.Text = message;
+                if (Application.Current.MainWindow is MainWindow main) main.ReloadGrid();
+            });
+            Log.Write("find working links: " + message);
+        }
+        catch (Exception ex)
+        {
+            await Dispatcher.InvokeAsync(() => FindLinksStatus.Text = "Link check failed: " + ex.Message);
+        }
+        finally
+        {
+            repo.FindLinksProgress -= progress;
+            _findingLinks = false;
+            await Dispatcher.InvokeAsync(() => BtnFindLinks.Content = "Find links");
+        }
     }
 
     private void OnImport(object sender, RoutedEventArgs e)
